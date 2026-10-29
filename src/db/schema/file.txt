@@ -1,0 +1,1240 @@
+import { pgEnum, pgTable, timestamp, uuid, varchar } from "drizzle-orm/pg-core";
+import { users } from "./users";
+
+export const adminLogsTargetType = pgEnum("admin_logs_target_type_logs", [
+  "vendor_profile",
+  "venue",
+  "venue_provider_profile",
+  "vendor_listing",
+]);
+
+export const adminLogs = pgTable("admin_logs", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  adminId: uuid("admin_id")
+    .notNull()
+    .references(() => users.id),
+  action: varchar("action", { length: 100 }).notNull(),
+  targetType: adminLogsTargetType("target_type").notNull(), // 'vendor_profile' | 'venue' | 'venue_provider_profile'
+  targetId: uuid("target_id").notNull(),
+  notes: varchar("notes", { length: 1000 }),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+import {
+  check,
+  index,
+  integer,
+  numeric,
+  pgEnum,
+  pgTable,
+  timestamp,
+  uuid,
+} from "drizzle-orm/pg-core";
+import { events } from "./events";
+import { inquiries } from "./inquiries";
+import { vendorListings } from "./vendor-listings";
+import { venues } from "./venues";
+import { users } from "./users";
+import { sql } from "drizzle-orm";
+import { targetTypeEnum } from "./enums";
+
+export const bookingStatusEnum = pgEnum("booking_status", [
+  "pending_payment",
+  "confirmed",
+  "completed",
+  "disputed",
+  "refunded",
+  "cancelled",
+]);
+
+export const bookings = pgTable(
+  "bookings",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    inquiryId: uuid("inquiry_id")
+      .notNull()
+      .unique()
+      .references(() => inquiries.id),
+    eventId: uuid("event_id")
+      .notNull()
+      .references(() => events.id),
+    organizerId: uuid("organizer_id")
+      .notNull()
+      .references(() => users.id),
+
+    targetType: targetTypeEnum("target_type").notNull(),
+    vendorListingId: uuid("vendor_listing_id").references(
+      () => vendorListings.id
+    ),
+    venueId: uuid("venue_id").references(() => venues.id),
+
+    // Denormalized — resolved at booking-creation time from either
+    // vendorListings.vendorProfileId → vendorProfiles.userId,
+    // or venues.venueProviderId → venueProviderProfiles.userId.
+    providerId: uuid("provider_id")
+      .notNull()
+      .references(() => users.id),
+
+    agreedPrice: integer("agreed_price").notNull(),
+    commissionRate: numeric("commission_rate", { precision: 5, scale: 4 })
+      .notNull()
+      .default("0.05"),
+    commissionAmount: integer("commission_amount").notNull(),
+    payoutAmount: integer("payout_amount").notNull(),
+
+    status: bookingStatusEnum("status").notNull().default("pending_payment"),
+    vendorMarkedCompleteAt: timestamp("vendor_marked_complete_at", {
+      withTimezone: true,
+    }),
+    organizerConfirmedCompleteAt: timestamp("organizer_confirmed_complete_at", {
+      withTimezone: true,
+    }),
+
+    confirmedAt: timestamp("confirmed_at", { withTimezone: true }),
+    cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    index("bookings_vendor_listing_idx").on(t.vendorListingId),
+    index("bookings_venue_idx").on(t.venueId),
+    index("bookings_organizer_idx").on(t.organizerId),
+    index("bookings_provider_idx").on(t.providerId),
+    index("bookings_status_idx").on(t.status),
+    check(
+      "bookings_exactly_one_target",
+      sql`(vendor_listing_id IS NOT NULL AND venue_id IS NULL) OR (vendor_listing_id IS NULL AND venue_id IS NOT NULL)`
+    ),
+    check(
+      "bookings_target_matches_type",
+      sql`(target_type = 'vendor' AND vendor_listing_id IS NOT NULL AND venue_id IS NULL)
+   OR (target_type = 'venue' AND venue_id IS NOT NULL AND vendor_listing_id IS NULL)`
+    ),
+  ]
+);
+import {
+  boolean,
+  index,
+  integer,
+  pgTable,
+  timestamp,
+  uniqueIndex,
+  uuid,
+  varchar,
+} from "drizzle-orm/pg-core";
+import { targetTypeEnum } from "./enums";
+
+export const categories = pgTable(
+  "categories",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    appliesTo: targetTypeEnum("applies_to").notNull(), // reuse shared enum
+    name: varchar("name", { length: 100 }).notNull(),
+    slug: varchar("slug", { length: 100 }).notNull(),
+    description: varchar("description", { length: 500 }),
+    isActive: boolean("is_active").notNull().default(true),
+    displayOrder: integer("display_order").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("categories_slug_applies_to_idx").on(t.slug, t.appliesTo),
+    index("categories_applies_to_active_idx").on(t.appliesTo, t.isActive),
+  ]
+);
+import { pgEnum } from "drizzle-orm/pg-core";
+
+export const targetTypeEnum = pgEnum("target_type", ["vendor", "venue"]);
+import {
+  integer,
+  pgTable,
+  timestamp,
+  uuid,
+  varchar,
+} from "drizzle-orm/pg-core";
+import { users } from "./users";
+// Shared discriminator values: 'vendor' | 'venue'
+
+export const events = pgTable("events", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  organizerId: uuid("organizer_id")
+    .notNull()
+    .references(() => users.id),
+  title: varchar("title", { length: 255 }).notNull(),
+  eventType: varchar("event_type", { length: 100 }),
+  eventDate: timestamp("event_date", { withTimezone: true }).notNull(),
+  location: varchar("location", { length: 255 }),
+  city: varchar("city", { length: 100 }),
+  state: varchar("state", { length: 100 }),
+  budget: integer("budget"),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+import { check, integer, pgTable, timestamp, uuid } from "drizzle-orm/pg-core";
+import { vendorListings } from "./vendor-listings";
+import { venues } from "./venues";
+import { sql } from "drizzle-orm";
+import { payments } from "./payments";
+import { targetTypeEnum } from "./enums";
+
+export const featuredListingPurchases = pgTable(
+  "featured_listing_purchases",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    targetType: targetTypeEnum("target_type").notNull(),
+    vendorListingId: uuid("vendor_listing_id").references(
+      () => vendorListings.id
+    ),
+    venueId: uuid("venue_id").references(() => venues.id),
+
+    paymentId: uuid("payment_id")
+      .notNull()
+      .references(() => payments.id),
+    durationDays: integer("duration_days").notNull(),
+    startsAt: timestamp("starts_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    endsAt: timestamp("ends_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  () => [
+    check(
+      "featured_exactly_one_target",
+      sql`(vendor_listing_id IS NOT NULL AND venue_id IS NULL) OR (vendor_listing_id IS NULL AND venue_id IS NOT NULL)`
+    ),
+    check(
+      "featured_target_matches_type",
+      sql`(target_type = 'vendor' AND vendor_listing_id IS NOT NULL AND venue_id IS NULL)
+   OR (target_type = 'venue' AND venue_id IS NOT NULL AND vendor_listing_id IS NULL)`
+    ),
+  ]
+);
+export * from "./enums";
+export * from "./users";
+export * from "./profiles";
+export * from "./vendor-listings"; // ← new
+export * from "./venues";
+export * from "./categories";
+export * from "./events";
+export * from "./inquiries";
+export * from "./messages";
+export * from "./bookings";
+export * from "./payments";
+export * from "./reviews";
+export * from "./featured-listing";
+export * from "./admin-logs";
+export * from "./otp-records";
+export * from "./relations";
+export * from "./notifications";
+import {
+  check,
+  index,
+  pgEnum,
+  pgTable,
+  timestamp,
+  uuid,
+} from "drizzle-orm/pg-core";
+import { venues } from "./venues";
+import { vendorListings } from "./vendor-listings";
+import { users } from "./users";
+import { events } from "./events";
+import { sql } from "drizzle-orm";
+import { targetTypeEnum } from "./enums";
+import { messages } from "./messages";
+
+export const inquiryStatusEnum = pgEnum("inquiry_status_enum", [
+  "open",
+  "closed",
+]);
+
+export const inquiries = pgTable(
+  "inquiries",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    eventId: uuid("event_id")
+      .notNull()
+      .references(() => events.id, { onDelete: "cascade" }),
+    organizerId: uuid("organizer_id")
+      .notNull()
+      .references(() => users.id),
+
+    targetType: targetTypeEnum("target_type").notNull(),
+    vendorListingId: uuid("vendor_listing_id").references(
+      () => vendorListings.id
+    ),
+    venueId: uuid("venue_id").references(() => venues.id),
+
+    status: inquiryStatusEnum("status").notNull().default("open"),
+    acceptedOfferMessageId: uuid("accepted_offer_message_id").references(
+      () => messages.id,
+      {
+        onDelete: "set null",
+      }
+    ),
+
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    index("inquiries_vendor_listing_idx").on(t.vendorListingId),
+    index("inquiries_venue_idx").on(t.venueId),
+    index("inquiries_organizer_idx").on(t.organizerId),
+    check(
+      "inquiries_exactly_one_target",
+      sql`(vendor_listing_id IS NOT NULL AND venue_id IS NULL) OR (vendor_listing_id IS NULL AND venue_id IS NOT NULL)`
+    ),
+    check(
+      "inquiries_target_matches_type",
+      sql`(target_type = 'vendor' AND vendor_listing_id IS NOT NULL AND venue_id IS NULL)
+   OR (target_type = 'venue' AND venue_id IS NOT NULL AND vendor_listing_id IS NULL)`
+    ),
+  ]
+);
+import {
+  index,
+  integer,
+  pgEnum,
+  pgTable,
+  timestamp,
+  uuid,
+  varchar,
+} from "drizzle-orm/pg-core";
+import type { AnyPgColumn } from "drizzle-orm/pg-core";
+import { inquiries } from "./inquiries";
+import { users } from "./users";
+
+export const offerStatusEnum = pgEnum("offer_status", [
+  "pending", // this offer is currently live — the one to act on
+  "accepted", // this exact offer became the booking
+  "rejected", // explicitly declined by the other party
+  "withdrawn", // sender pulled it back before a response
+  "superseded", // a newer offer was sent before this one was resolved
+]);
+
+export const messages = pgTable(
+  "messages",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    inquiryId: uuid("inquiry_id")
+      .notNull()
+      .references((): AnyPgColumn => inquiries.id, { onDelete: "cascade" }),
+    senderId: uuid("sender_id")
+      .notNull()
+      .references(() => users.id),
+    body: varchar("body", { length: 2000 }).notNull(),
+    proposedPrice: integer("proposed_price"),
+    offerStatus: offerStatusEnum("offer_status"), // null for plain chat messages
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [index("messages_inquiry_idx").on(t.inquiryId)]
+);
+import {
+  boolean,
+  index,
+  pgEnum,
+  pgTable,
+  timestamp,
+  uuid,
+  varchar,
+} from "drizzle-orm/pg-core";
+import { users } from "./users";
+
+export const notificationTypeEnum = pgEnum("notification_type", [
+  "new_inquiry",
+  "new_message",
+  "new_offer",
+  "offer_accepted",
+  "offer_declined",
+  "booking_confirmed",
+  "payment_received",
+  "completion_requested", // other party marked their side complete
+  "booking_completed",
+  "review_received",
+  "listing_approved",
+  "listing_rejected",
+]);
+
+export const notifications = pgTable(
+  "notifications",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    type: notificationTypeEnum("type").notNull(),
+    title: varchar("title", { length: 255 }).notNull(),
+    body: varchar("body", { length: 1000 }),
+    linkEntityType: varchar("link_entity_type", { length: 50 }), // 'inquiry' | 'booking' | 'vendor_listing' | 'venue'
+    linkEntityId: uuid("link_entity_id"),
+    isRead: boolean("is_read").notNull().default(false),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    index("notifications_user_unread_idx").on(t.userId, t.isRead),
+    index("notifications_user_created_idx").on(t.userId, t.createdAt),
+  ]
+);
+import {
+  check,
+  index,
+  integer,
+  pgEnum,
+  pgTable,
+  text,
+  timestamp,
+  uuid,
+} from "drizzle-orm/pg-core";
+import { users } from "./users";
+import { sql } from "drizzle-orm";
+
+export const otpTypeEnum = pgEnum("otp_type", [
+  "email_verification",
+  "password_reset",
+  "two_factor",
+  "account_deletion",
+]);
+export const otpRecords = pgTable(
+  "otp_records",
+  {
+    id: uuid("id").defaultRandom().primaryKey(), // ← add
+    userId: uuid("user_id")
+      .references(() => users.id, { onDelete: "cascade" })
+      .notNull(),
+    codeHash: text("code_hash").notNull(),
+    type: otpTypeEnum("type").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    consumedAt: timestamp("consumed_at", { withTimezone: true }), // ← was `date`
+    attempts: integer("attempts").notNull().default(0),
+    maxAttempts: integer("max_attempts").notNull().default(5),
+  },
+  (t) => [
+    index("user_id_and_type_idx").on(t.userId, t.type),
+    check("attempts_check", sql`attempts >= 0 and max_attempts > 0`),
+  ],
+);
+import {
+  check,
+  index,
+  integer,
+  jsonb,
+  pgEnum,
+  pgTable,
+  timestamp,
+  uniqueIndex,
+  uuid,
+  varchar,
+} from "drizzle-orm/pg-core";
+import { bookings } from "./bookings";
+import { users } from "./users";
+import { sql } from "drizzle-orm";
+
+export const paymentPurposeEnum = pgEnum("payment_purpose", [
+  "booking",
+  "featured_listing",
+]);
+export const paymentStatusEnum = pgEnum("payment_status", [
+  "pending",
+  "success",
+  "failed",
+]);
+
+export const payments = pgTable(
+  "payments",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    bookingId: uuid("booking_id").references(() => bookings.id, {
+      onDelete: "cascade",
+    }),
+    payerId: uuid("payer_id")
+      .notNull()
+      .references(() => users.id),
+    purpose: paymentPurposeEnum("purpose").notNull(), // 'booking' | 'featured_listing'
+
+    reference: varchar("reference", { length: 100 }).notNull(),
+    subaccountCode: varchar("subaccount_code", {
+      length: 100,
+    }),
+
+    amount: integer("amount").notNull(),
+    platformFee: integer("platform_fee"),
+    payoutAmount: integer("payout_amount"),
+    currency: varchar("currency", { length: 10 }).notNull().default("NGN"),
+
+    status: paymentStatusEnum("status").notNull().default("pending"),
+    rawWebhookPayload: jsonb("raw_webhook_payload"),
+
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    verifiedAt: timestamp("verified_at", { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex("payments_reference_idx").on(t.reference),
+    index("payments_booking_idx").on(t.bookingId),
+    check(
+      "payments_purpose_reference_check",
+      sql`(
+        ${t.purpose} = 'booking'
+        AND ${t.bookingId} IS NOT NULL
+      ) OR (
+        ${t.purpose} = 'featured_listing'
+        AND ${t.bookingId} IS NULL
+      )`
+    ),
+  ]
+);
+import {
+  boolean,
+  index,
+  jsonb,
+  pgEnum,
+  pgTable,
+  timestamp,
+  uuid,
+  varchar,
+} from "drizzle-orm/pg-core";
+import { users } from "./users";
+
+export const verificationStatusEnum = pgEnum("verification_status", [
+  "pending",
+  "approved",
+  "rejected",
+]);
+
+export const organizerProfiles = pgTable("organizer_profiles", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  userId: uuid("user_id")
+    .notNull()
+    .unique()
+    .references(() => users.id),
+  displayName: varchar("display_name", { length: 255 }).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
+// vendor_profiles.ts — now the business/KYC/payout wrapper only.
+// Bookable products live in vendor_listings, mirroring venueProviderProfiles → venues.
+export const vendorProfiles = pgTable(
+  "vendor_profiles",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: uuid("user_id")
+      .notNull()
+      .unique()
+      .references(() => users.id),
+    businessName: varchar("business_name", { length: 255 }).notNull(),
+    description: varchar("description", { length: 2000 }),
+    contactEmail: varchar("contact_email", { length: 255 }).notNull(),
+    contactPhone: varchar("contact_phone", { length: 20 }).notNull(),
+    state: varchar("state", { length: 100 }),
+    city: varchar("city", { length: 100 }),
+    kycDocuments: jsonb("kyc_documents")
+      .$type<string[]>()
+      .notNull()
+      .default([]),
+    blockedDates: jsonb("blocked_dates")
+      .$type<string[]>()
+      .notNull()
+      .default([]),
+    bankCode: varchar("bank_code", { length: 20 }),
+    accountNumber: varchar("account_number", { length: 20 }),
+    accountName: varchar("account_name", { length: 255 }),
+    subaccountCode: varchar("subaccount_code", { length: 100 }),
+    payoutsEnabled: boolean("payouts_enabled").notNull().default(false),
+    verificationStatus: verificationStatusEnum("verification_status")
+      .notNull()
+      .default("pending"),
+    rejectionReason: varchar("rejection_reason", { length: 1000 }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [index("vendor_status_idx").on(t.verificationStatus)]
+);
+
+// venue_provider_profiles.ts — unchanged
+export const venueProviderProfiles = pgTable(
+  "venue_provider_profiles",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: uuid("user_id")
+      .notNull()
+      .unique()
+      .references(() => users.id),
+    companyName: varchar("company_name", { length: 255 }).notNull(),
+    contactName: varchar("contact_name", { length: 255 }).notNull(),
+    contactEmail: varchar("contact_email", { length: 255 }).notNull(),
+    contactPhone: varchar("contact_phone", { length: 20 }).notNull(),
+    kycDocuments: jsonb("kyc_documents")
+      .$type<string[]>()
+      .notNull()
+      .default([]),
+    bankCode: varchar("bank_code", { length: 20 }),
+    subaccountCode: varchar("subaccount_code", { length: 100 }),
+    payoutsEnabled: boolean("payouts_enabled").notNull().default(false),
+    accountNumber: varchar("account_number", { length: 20 }),
+    accountName: varchar("account_name", { length: 255 }),
+    verificationStatus: verificationStatusEnum("verification_status")
+      .notNull()
+      .default("pending"),
+    rejectionReason: varchar("rejection_reason", { length: 1000 }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [index("venue_provider_status_idx").on(t.verificationStatus)]
+);
+import { relations } from "drizzle-orm";
+import {
+  organizerProfiles,
+  vendorProfiles,
+  venueProviderProfiles,
+} from "./profiles";
+import { vendorListings } from "./vendor-listings";
+import { users } from "./users";
+import { events } from "./events";
+import { inquiries } from "./inquiries";
+import { messages } from "./messages";
+import { bookings } from "./bookings";
+import { reviews } from "./reviews";
+import { adminLogs } from "./admin-logs";
+import { categories } from "./categories";
+import { featuredListingPurchases } from "./featured-listing";
+import { venues } from "./venues";
+import { payments } from "./payments";
+import { otpRecords } from "./otp-records";
+import { notifications } from "./notifications";
+import { vendorListingsCategories } from "./vendor-listings-categories";
+
+// ─────────────────────────────────────────────
+// USERS
+// ─────────────────────────────────────────────
+export const usersRelations = relations(users, ({ one, many }) => ({
+  organizerProfile: one(organizerProfiles, {
+    fields: [users.id],
+    references: [organizerProfiles.userId],
+  }),
+  vendorProfile: one(vendorProfiles, {
+    fields: [users.id],
+    references: [vendorProfiles.userId],
+  }),
+  venueProviderProfile: one(venueProviderProfiles, {
+    fields: [users.id],
+    references: [venueProviderProfiles.userId],
+  }),
+
+  eventsAsOrganizer: many(events),
+  inquiriesAsOrganizer: many(inquiries),
+  messagesSent: many(messages),
+  bookingsAsOrganizer: many(bookings, { relationName: "bookingOrganizer" }),
+  bookingsAsProvider: many(bookings, { relationName: "bookingProvider" }),
+  reviewsWritten: many(reviews),
+  adminLogsCreated: many(adminLogs),
+  otpRecords: many(otpRecords),
+  notifications: many(notifications),
+}));
+
+// ─────────────────────────────────────────────
+// ORGANIZER PROFILE
+// ─────────────────────────────────────────────
+export const organizerProfilesRelations = relations(
+  organizerProfiles,
+  ({ one }) => ({
+    user: one(users, {
+      fields: [organizerProfiles.userId],
+      references: [users.id],
+    }),
+  }),
+);
+
+// ─────────────────────────────────────────────
+// VENDOR PROFILE (business/KYC wrapper)
+// ─────────────────────────────────────────────
+export const vendorProfilesRelations = relations(
+  vendorProfiles,
+  ({ one, many }) => ({
+    user: one(users, {
+      fields: [vendorProfiles.userId],
+      references: [users.id],
+    }),
+    listings: many(vendorListings),
+  }),
+);
+
+// ─────────────────────────────────────────────
+// VENDOR LISTINGS (bookable products)
+// ─────────────────────────────────────────────
+export const vendorListingsRelations = relations(
+  vendorListings,
+  ({ one, many }) => ({
+    vendorProfile: one(vendorProfiles, {
+      fields: [vendorListings.vendorProfileId],
+      references: [vendorProfiles.id],
+    }),
+    category: one(vendorListingsCategories, {
+      fields: [vendorListings.categoryId],
+      references: [vendorListingsCategories.id],
+    }),
+    inquiries: many(inquiries),
+    bookings: many(bookings),
+    reviews: many(reviews),
+    featuredPurchases: many(featuredListingPurchases),
+  }),
+);
+// ─────────────────────────────────────────────
+// VENDOR LISTINGS CATEGORIES (bookable products)
+// ─────────────────────────────────────────────
+export const vendorListingsCategoriesRelations = relations(
+  vendorListingsCategories,
+  ({ many }) => ({
+    vendorListing: many(vendorProfiles),
+  }),
+);
+
+// ─────────────────────────────────────────────
+// VENUE PROVIDER PROFILE (company/KYC wrapper)
+// ─────────────────────────────────────────────
+export const venueProviderProfilesRelations = relations(
+  venueProviderProfiles,
+  ({ one, many }) => ({
+    user: one(users, {
+      fields: [venueProviderProfiles.userId],
+      references: [users.id],
+    }),
+    venues: many(venues),
+  }),
+);
+
+// ─────────────────────────────────────────────
+// VENUES
+// ─────────────────────────────────────────────
+export const venuesRelations = relations(venues, ({ one, many }) => ({
+  venueProvider: one(venueProviderProfiles, {
+    fields: [venues.venueProviderId],
+    references: [venueProviderProfiles.id],
+  }),
+  venueType: one(categories, {
+    fields: [venues.venueTypeId],
+    references: [categories.id],
+  }),
+  inquiries: many(inquiries),
+  bookings: many(bookings),
+  reviews: many(reviews),
+  featuredPurchases: many(featuredListingPurchases),
+}));
+
+// ─────────────────────────────────────────────
+// CATEGORIES
+// ─────────────────────────────────────────────
+export const categoriesRelations = relations(categories, ({ many }) => ({
+  vendorListings: many(vendorListings),
+  venues: many(venues),
+}));
+
+// ─────────────────────────────────────────────
+// EVENTS
+// ─────────────────────────────────────────────
+export const eventsRelations = relations(events, ({ one, many }) => ({
+  organizer: one(users, {
+    fields: [events.organizerId],
+    references: [users.id],
+  }),
+  inquiries: many(inquiries),
+  bookings: many(bookings),
+}));
+
+// ─────────────────────────────────────────────
+// INQUIRIES (dual-target: vendor listing OR venue)
+// ─────────────────────────────────────────────
+export const inquiriesRelations = relations(inquiries, ({ one, many }) => ({
+  event: one(events, {
+    fields: [inquiries.eventId],
+    references: [events.id],
+  }),
+  organizer: one(users, {
+    fields: [inquiries.organizerId],
+    references: [users.id],
+  }),
+  vendorListing: one(vendorListings, {
+    fields: [inquiries.vendorListingId],
+    references: [vendorListings.id],
+  }),
+  venue: one(venues, {
+    fields: [inquiries.venueId],
+    references: [venues.id],
+  }),
+  messages: many(messages),
+  booking: one(bookings, {
+    fields: [inquiries.id],
+    references: [bookings.inquiryId],
+  }),
+}));
+
+// ─────────────────────────────────────────────
+// MESSAGES
+// ─────────────────────────────────────────────
+export const messagesRelations = relations(messages, ({ one }) => ({
+  inquiry: one(inquiries, {
+    fields: [messages.inquiryId],
+    references: [inquiries.id],
+  }),
+  sender: one(users, {
+    fields: [messages.senderId],
+    references: [users.id],
+  }),
+}));
+
+// ─────────────────────────────────────────────
+// BOOKINGS (dual-target + dual-user relation)
+// ─────────────────────────────────────────────
+export const bookingsRelations = relations(bookings, ({ one, many }) => ({
+  inquiry: one(inquiries, {
+    fields: [bookings.inquiryId],
+    references: [inquiries.id],
+  }),
+  event: one(events, {
+    fields: [bookings.eventId],
+    references: [events.id],
+  }),
+  organizer: one(users, {
+    fields: [bookings.organizerId],
+    references: [users.id],
+    relationName: "bookingOrganizer",
+  }),
+  provider: one(users, {
+    fields: [bookings.providerId],
+    references: [users.id],
+    relationName: "bookingProvider",
+  }),
+  vendorListing: one(vendorListings, {
+    fields: [bookings.vendorListingId],
+    references: [vendorListings.id],
+  }),
+  venue: one(venues, {
+    fields: [bookings.venueId],
+    references: [venues.id],
+  }),
+  payments: many(payments),
+  review: many(reviews),
+}));
+
+// ─────────────────────────────────────────────
+// PAYMENTS
+// ─────────────────────────────────────────────
+export const paymentsRelations = relations(payments, ({ one, many }) => ({
+  booking: one(bookings, {
+    fields: [payments.bookingId],
+    references: [bookings.id],
+  }),
+  payer: one(users, {
+    fields: [payments.payerId],
+    references: [users.id],
+  }),
+  featuredPurchase: many(featuredListingPurchases),
+}));
+
+// ─────────────────────────────────────────────
+// REVIEWS (dual-target)
+// ─────────────────────────────────────────────
+export const reviewsRelations = relations(reviews, ({ one }) => ({
+  booking: one(bookings, {
+    fields: [reviews.bookingId],
+    references: [bookings.id],
+  }),
+  reviewer: one(users, {
+    fields: [reviews.reviewerId],
+    references: [users.id],
+  }),
+  vendorListing: one(vendorListings, {
+    fields: [reviews.vendorListingId],
+    references: [vendorListings.id],
+  }),
+  venue: one(venues, {
+    fields: [reviews.venueId],
+    references: [venues.id],
+  }),
+}));
+
+// ─────────────────────────────────────────────
+// FEATURED LISTING PURCHASES (dual-target)
+// ─────────────────────────────────────────────
+export const featuredListingPurchasesRelations = relations(
+  featuredListingPurchases,
+  ({ one }) => ({
+    payment: one(payments, {
+      fields: [featuredListingPurchases.paymentId],
+      references: [payments.id],
+    }),
+    vendorListing: one(vendorListings, {
+      fields: [featuredListingPurchases.vendorListingId],
+      references: [vendorListings.id],
+    }),
+    venue: one(venues, {
+      fields: [featuredListingPurchases.venueId],
+      references: [venues.id],
+    }),
+  }),
+);
+
+// ─────────────────────────────────────────────
+// ADMIN LOGS
+// ─────────────────────────────────────────────
+export const adminLogsRelations = relations(adminLogs, ({ one }) => ({
+  admin: one(users, {
+    fields: [adminLogs.adminId],
+    references: [users.id],
+  }),
+}));
+
+// ─────────────────────────────────────────────
+// OTP RECORDS
+// ─────────────────────────────────────────────
+export const otpRecordsRelations = relations(otpRecords, ({ one }) => ({
+  user: one(users, {
+    fields: [otpRecords.userId],
+    references: [users.id],
+  }),
+}));
+
+// relations.ts addition
+export const notificationsRelations = relations(notifications, ({ one }) => ({
+  user: one(users, { fields: [notifications.userId], references: [users.id] }),
+}));
+import {
+  check,
+  index,
+  integer,
+  pgTable,
+  timestamp,
+  uniqueIndex,
+  uuid,
+  varchar,
+} from "drizzle-orm/pg-core";
+import { bookings } from "./bookings";
+import { users } from "./users";
+import { vendorListings } from "./vendor-listings";
+import { venues } from "./venues";
+import { sql } from "drizzle-orm";
+import { targetTypeEnum } from "./enums";
+
+export const reviews = pgTable(
+  "reviews",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    bookingId: uuid("booking_id")
+      .notNull()
+      .references(() => bookings.id, { onDelete: "cascade" }),
+    reviewerId: uuid("reviewer_id")
+      .notNull()
+      .references(() => users.id),
+
+    targetType: targetTypeEnum("target_type").notNull(),
+    vendorListingId: uuid("vendor_listing_id").references(
+      () => vendorListings.id
+    ),
+    venueId: uuid("venue_id").references(() => venues.id),
+
+    rating: integer("rating").notNull(),
+    comment: varchar("comment", { length: 2000 }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("reviews_booking_reviewer_unique").on(
+      t.bookingId,
+      t.reviewerId
+    ),
+    index("reviews_vendor_listing_idx").on(t.vendorListingId),
+    index("reviews_venue_idx").on(t.venueId),
+    check("reviews_rating_range", sql`rating BETWEEN 1 AND 5`),
+    check(
+      "reviews_exactly_one_target",
+      sql`(vendor_listing_id IS NOT NULL AND venue_id IS NULL) OR (vendor_listing_id IS NULL AND venue_id IS NOT NULL)`
+    ),
+    check(
+      "reviews_target_matches_type",
+      sql`(target_type = 'vendor' AND vendor_listing_id IS NOT NULL AND venue_id IS NULL)
+   OR (target_type = 'venue' AND venue_id IS NOT NULL AND vendor_listing_id IS NULL)`
+    ),
+  ]
+);
+import {
+  boolean,
+  pgEnum,
+  pgTable,
+  timestamp,
+  uuid,
+  varchar,
+} from "drizzle-orm/pg-core";
+
+export const userStatusEnum = pgEnum("user_status", [
+  "active",
+  "suspended",
+  "inactive",
+]);
+
+export const staffRoleEnum = pgEnum("staff_role", [
+  "super_admin",
+  "moderator",
+  "support",
+]);
+
+// users.ts
+export const users = pgTable("users", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  email: varchar("email", { length: 255 }).notNull().unique(),
+  phone: varchar("phone", { length: 20 }),
+  passwordHash: varchar("password_hash", { length: 255 }),
+  googleAuthId: varchar("google_auth_id", { length: 100 }),
+  isStaff: boolean("is_staff").notNull().default(false),
+  staffRole: staffRoleEnum("staff_role"),
+  status: userStatusEnum("status").notNull().default("active"),
+  emailVerifiedAt: timestamp("email_verified_at", {
+    mode: "date",
+    withTimezone: true,
+  }),
+  createdAt: timestamp("created_at", { mode: "date", withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+import {
+  boolean,
+  index,
+  integer,
+  pgTable,
+  timestamp,
+  uuid,
+  varchar,
+} from "drizzle-orm/pg-core";
+
+export const vendorListingsCategories = pgTable(
+  "vendor_listing_categories",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    name: varchar("name", { length: 100 }).notNull(),
+    slug: varchar("slug", { length: 100 })
+      .notNull()
+      .unique("vendor_listing_categories_slug"),
+    description: varchar("description", { length: 500 }),
+    isActive: boolean("is_active").notNull().default(true),
+    displayOrder: integer("display_order").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [index("vendor_listing_slug_idx").on(t.slug)]
+);
+import {
+  boolean,
+  check,
+  index,
+  integer,
+  jsonb,
+  numeric,
+  pgEnum,
+  pgTable,
+  timestamp,
+  uuid,
+  varchar,
+} from "drizzle-orm/pg-core";
+import { vendorProfiles } from "./profiles";
+import { sql } from "drizzle-orm";
+import { vendorListingsCategories } from "./vendor-listings-categories";
+
+export const priceUnitEnum = pgEnum("price_unit_enum", [
+  "fixed",
+  "per_day",
+  "per_hour",
+  "per_guest",
+]);
+
+export const vendorListings = pgTable(
+  "vendor_listings",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    vendorProfileId: uuid("vendor_profile_id")
+      .notNull()
+      .references(() => vendorProfiles.id, { onDelete: "cascade" }),
+    categoryId: uuid("category_id")
+      .notNull()
+      .references(() => vendorListingsCategories.id, { onDelete: "restrict" }),
+
+    title: varchar("title", { length: 255 }).notNull(), // "Premium Wedding Photography Package"
+    description: varchar("description", { length: 2000 }),
+    priceMin: integer("price_min"),
+    priceMax: integer("price_max"),
+    priceUnit: priceUnitEnum("price_unit").notNull().default("fixed"), // fixed | per_hour | per_guest | per_day
+
+    portfolioImages: jsonb("portfolio_images")
+      .$type<string[]>()
+      .notNull()
+      .default([]),
+    isActive: boolean("is_active").notNull().default(true),
+
+    ratingAvg: numeric("rating_avg", { precision: 3, scale: 2 }).default("0"),
+    ratingCount: integer("rating_count").notNull().default(0),
+
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    index("vendor_listings_vendor_idx").on(t.vendorProfileId),
+    index("vendor_listings_category_idx").on(t.categoryId),
+    index("vendor_listings_price_min_idx").on(t.priceMin),
+    index("vendor_listings_price_max_idx").on(t.priceMax),
+    index("vendor_listings_rating_avg_idx").on(t.ratingAvg),
+    check(
+      "vendor_listings_price_range_check",
+      sql`(
+    price_min IS NULL
+    OR price_min >= 0
+  ) AND (
+    price_max IS NULL
+    OR price_max >= 0
+  ) AND (
+    price_min IS NULL
+    OR price_max IS NULL
+    OR price_min <= price_max
+  )`,
+    ),
+    check(
+      "rating_avg_check",
+      sql`
+      (rating_avg >= 0) AND (rating_avg <= 5)
+      `,
+    ),
+    check(
+      "rating_count_check",
+      sql`
+      rating_count >= 0
+      `,
+    ),
+  ],
+);
+import {
+  check,
+  index,
+  integer,
+  jsonb,
+  numeric,
+  pgTable,
+  timestamp,
+  uuid,
+  varchar,
+} from "drizzle-orm/pg-core";
+import { venueProviderProfiles, verificationStatusEnum } from "./profiles";
+import { categories } from "./categories";
+import { sql } from "drizzle-orm";
+
+// venues.ts
+export const venues = pgTable(
+  "venues",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    venueProviderId: uuid("venue_provider_id")
+      .notNull()
+      .references(() => venueProviderProfiles.id, { onDelete: "cascade" }),
+
+    name: varchar("name", { length: 255 }).notNull(),
+    description: varchar("description", { length: 2000 }),
+    venueTypeId: uuid("venue_type_id")
+      .notNull()
+      .references(() => categories.id, { onDelete: "restrict" }), // single category, appliesTo='venue'
+
+    address: varchar("address", { length: 500 }).notNull(),
+    state: varchar("state", { length: 100 }),
+    city: varchar("city", { length: 100 }),
+
+    capacityMin: integer("capacity_min"),
+    capacityMax: integer("capacity_max"),
+    amenities: jsonb("amenities").$type<string[]>().notNull().default([]),
+
+    priceMin: integer("price_min"),
+    priceMax: integer("price_max"),
+
+    portfolioImages: jsonb("portfolio_images")
+      .$type<string[]>()
+      .notNull()
+      .default([]),
+    blockedDates: jsonb("blocked_dates")
+      .$type<string[]>()
+      .notNull()
+      .default([]),
+
+    // Each physical venue is independently approved — a provider
+    // with 3 venues could have 2 approved and 1 pending/rejected.
+    verificationStatus: verificationStatusEnum("verification_status")
+      .notNull()
+      .default("pending"),
+    rejectionReason: varchar("rejection_reason", { length: 1000 }),
+
+    featuredUntil: timestamp("featured_until", { withTimezone: true }),
+    ratingAvg: numeric("rating_avg", { precision: 3, scale: 2 }).default("0"),
+
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    index("venues_provider_idx").on(t.venueProviderId),
+    index("venues_status_idx").on(t.verificationStatus),
+    index("venues_venue_type_idx").on(t.venueTypeId),
+    check(
+      "venues_capacity_range_check",
+      sql`(
+    capacity_min IS NULL
+    OR capacity_min >= 0
+  ) AND (
+    capacity_max IS NULL
+    OR capacity_max >= 0
+  ) AND (
+    capacity_min IS NULL
+    OR capacity_max IS NULL
+    OR capacity_min <= capacity_max
+  )`,
+    ),
+    check(
+      "venues_price_range_check",
+      sql`(
+    price_min IS NULL
+    OR price_min >= 0
+  ) AND (
+    price_max IS NULL
+    OR price_max >= 0
+  ) AND (
+    price_min IS NULL
+    OR price_max IS NULL
+    OR price_min <= price_max
+  )`,
+    ),
+    check(
+      "rating_avg_check",
+      sql`
+      (rating_avg >= 0) AND (rating_avg <= 5)
+      `,
+    ),
+  ],
+);
