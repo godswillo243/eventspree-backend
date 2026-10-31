@@ -1,6 +1,7 @@
 import express from "express";
 import type { Express } from "express";
 import cors from "cors";
+import cookieParser from "cookie-parser";
 import { env } from "./config/env";
 import helmet from "helmet";
 import { dbCheck } from "./db/utils";
@@ -31,7 +32,7 @@ app.use(
     origin: [env.CLIENT_URL],
   }),
 );
-
+app.use(cookieParser(env.COOKIE_SECRET));
 app.use(express.json());
 
 app.use(requestLogger);

@@ -12,7 +12,7 @@ type AsyncHandler = (
   next: NextFunction,
 ) => Promise<void>;
 
-export function asyncHandler(handler: Handler): RequestHandler {
+export function asyncHandler(handler: Handler): Handler {
   return (req, res, next) => {
     Promise.resolve(handler(req, res, next)).catch(next);
   };

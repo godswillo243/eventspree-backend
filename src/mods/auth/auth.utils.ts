@@ -1,7 +1,10 @@
-import type { OTPType } from "../../db/types";
+import type { OTPRecord, OTPType } from "../../db/types";
 import { db } from "../../db/client";
 import { otpRecords } from "../../db/schema";
-import { and, eq, ne } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
+import { verifyHash } from "../../lib/password";
+import { env } from "../../config/env";
+import { MS_MAP } from "../../constants";
 
 export async function upsertOTP({
   expiresAt,
@@ -16,16 +19,9 @@ export async function upsertOTP({
   expiresAt: Date;
   maxAttempts?: number;
 }) {
-  const existingRecords = await db
-    .select({ id: otpRecords.id })
-    .from(otpRecords)
+  await db
+    .delete(otpRecords)
     .where(and(eq(otpRecords.userId, userId), eq(otpRecords.type, type)));
-
-  if (existingRecords.length > 0) {
-    await db
-      .delete(otpRecords)
-      .where(and(eq(otpRecords.userId, userId), eq(otpRecords.type, type)));
-  }
 
   const newRecord = (
     await db
@@ -40,4 +36,38 @@ export async function upsertOTP({
       .returning()
   )[0];
   return newRecord;
+}
+
+export async function validateOtpRecord(
+  record: OTPRecord | null,
+  inputOtp: string,
+) {
+  if (!record)
+    return {
+      ok: false,
+      message: "Invalid OTP. Request a new one.",
+      statusCode: 400,
+    };
+  if (record.attempts >= record.maxAttempts)
+    return { ok: false, message: "Max attempts reached.", statusCode: 400 };
+  if (record.expiresAt <= new Date())
+    return { ok: false, message: "OTP expired.", statusCode: 400 };
+  if (record.consumedAt)
+    return { ok: false, message: "OTP already used.", statusCode: 400 };
+
+  const isMatch = await verifyHash(record.codeHash, inputOtp);
+  if (!isMatch) {
+    await db
+      .update(otpRecords)
+      .set({ attempts: record.attempts + 1 })
+      .where(eq(otpRecords.id, record.id));
+    return { ok: false, message: "Invalid OTP.", statusCode: 400 };
+  }
+  return { ok: true };
+}
+
+export function getRefreshExpiry(): Date {
+  const raw = env.JWT_REFRESH_EXPIRES;
+  const unit = raw[raw.length - 1] as keyof typeof MS_MAP;
+  return new Date(Date.now() + parseInt(raw) * MS_MAP[unit]);
 }

@@ -9,7 +9,7 @@ interface ApiResponse<T = unknown> {
   errors?: Array<{ field: string; message: string }>;
 }
 
-export function getSuccesResponse<T>(
+export function getSuccessResponse<T>(
   data: T,
   message: string,
   meta?: Record<string, unknown>,

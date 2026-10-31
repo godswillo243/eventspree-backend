@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { db } from "../../db/client";
 import { otpRecords, refreshTokens, users } from "../../db/schema";
 import type {
@@ -13,10 +13,10 @@ import { AppError } from "../../lib/api-error";
 import { generateHash } from "../../lib/password";
 import { generate } from "otp-generator";
 import { DAY, HOUR, MINUTE, MS_MAP, SECOND } from "../../constants";
-import { upsertOTP } from "./auth.utils";
+import { upsertOTP, validateOtpRecord } from "./auth.utils";
 import { verifyHash } from "../../lib/password";
 import { logger } from "../../config/logger";
-import { signAccessJWT, signRefreshJWT } from "../../lib/jwt";
+import { signAccessJWT, signRefreshJWT, verifyRefreshJWT } from "../../lib/jwt";
 import crypto from "crypto";
 import { env } from "../../config/env";
 import {
@@ -89,7 +89,9 @@ export async function signupService(input: SignupInput): ServiceReturnType {
   });
 
   // TODO: Send otp to email
-  logger.info("OTP for " + input + ": " + otp);
+  if (env.NODE_ENV !== "production") {
+    logger.info(`OTP for ${input.email}: ${otp}`);
+  }
   await sendSignUpOtp(newUser.email, newUser.email, otp);
 
   return {
@@ -139,6 +141,8 @@ export async function verifyEmailService(
           eq(otpRecords.userId, user.id),
         ),
       )
+      .orderBy(desc(otpRecords.createdAt))
+      .limit(1)
   )[0];
 
   if (!record) {
@@ -149,35 +153,16 @@ export async function verifyEmailService(
     };
   }
 
-  if (record.attempts > record.maxAttempts) {
-    return {
-      ok: false,
-      message: "Max attempts reached. Please request for another otp",
-      statusCode: 400,
-    };
-  }
+  const { ok, message, statusCode } = await validateOtpRecord(
+    record,
+    input.otp,
+  );
 
-  const isMatch = await verifyHash(record.codeHash, input.otp);
-  if (!isMatch) {
-    await db
-      .update(otpRecords)
-      .set({ attempts: record.attempts + 1 })
-      .where(eq(otpRecords.id, record.id));
-    return { ok: false, message: "Invalid OTP.", statusCode: 400 };
-  }
-  if (record.expiresAt <= new Date(Date.now())) {
+  if (!ok) {
     return {
-      ok: false,
-      message: "OTP expired. Please request for another otp",
-      statusCode: 400,
-    };
-  }
-
-  if (record.consumedAt) {
-    return {
-      ok: false,
-      message: "OTP already used. Please request for anther one.",
-      statusCode: 400,
+      ok,
+      message: message || "Invalid otp.",
+      statusCode: statusCode || 401,
     };
   }
 
@@ -193,7 +178,11 @@ export async function verifyEmailService(
 
   if (!updatedUser) throw new Error("Something went wrong");
 
-  await sendEmailVerified(user.email, user.email, "");
+  await sendEmailVerified(
+    user.email,
+    user.email,
+    `${env.CLIENT_URL}/dashboard`,
+  );
 
   await db
     .update(otpRecords)
@@ -399,56 +388,32 @@ export async function resetPasswordService(
     };
   }
 
-  const record = (
-    await db
-      .select()
-      .from(otpRecords)
-      .where(
-        and(
-          eq(otpRecords.type, "password_reset"),
-          eq(otpRecords.userId, user.id),
-        ),
-      )
-  )[0];
+  const record =
+    (
+      await db
+        .select()
+        .from(otpRecords)
+        .where(
+          and(
+            eq(otpRecords.type, "password_reset"),
+            eq(otpRecords.userId, user.id),
+          ),
+        )
+        .orderBy(desc(otpRecords.createdAt))
+        .limit(1)
+    )[0] || null;
 
-  if (!record) {
-    return {
-      ok: false,
-      message: "Invalid OTP. Request for another",
-      statusCode: 400,
-    };
-  }
+  const { ok, message, statusCode } = await validateOtpRecord(
+    record,
+    input.otp,
+  );
 
-  if (record.attempts > record.maxAttempts) {
+  if (!ok || !record) {
     return {
-      ok: false,
-      message: "Max attempts reached. Please request for another otp",
-      statusCode: 400,
-    };
-  }
-  if (record.expiresAt <= new Date(Date.now())) {
-    return {
-      ok: false,
-      message: "OTP expired. Please request for another otp",
-      statusCode: 400,
-    };
-  }
-
-  if (record.consumedAt) {
-    return {
-      ok: false,
-      message: "OTP already used. Please request for anther one.",
-      statusCode: 400,
-    };
-  }
-
-  const isMatch = await verifyHash(record.codeHash, input.otp);
-  if (!isMatch) {
-    await db
-      .update(otpRecords)
-      .set({ attempts: record.attempts + 1 })
-      .where(eq(otpRecords.id, record.id));
-    return { ok: false, message: "Invalid OTP.", statusCode: 400 };
+      ok,
+      message: message || "Invalid otp.",
+      statusCode: statusCode || 401,
+    } as unknown as ServiceReturnType;
   }
 
   const passwordHash = await generateHash(input.newPassword);
@@ -470,12 +435,161 @@ export async function resetPasswordService(
     .update(otpRecords)
     .set({ consumedAt: new Date() })
     .where(eq(otpRecords.id, record.id));
-  await sendPasswordResetSuccess(user.email, user.email, "");
+
+  await sendPasswordResetSuccess(
+    user.email,
+    user.email,
+    `${env.CLIENT_URL}/login`,
+  );
+
+  await db
+    .update(refreshTokens)
+    .set({ revokedAt: new Date() })
+    .where(eq(refreshTokens.userId, user.id));
 
   return {
     ok: true,
     message: "Password reset.",
     statusCode: 200,
     data: null,
+  };
+}
+
+export async function refreshService(token: string): ServiceReturnType {
+  const payload = verifyRefreshJWT(token);
+  if (!payload) {
+    return { ok: false, message: "Invalid refresh token.", statusCode: 401 };
+  }
+
+  const session = (
+    await db
+      .select()
+      .from(refreshTokens)
+      .where(eq(refreshTokens.id, payload.sessionId))
+  )[0];
+
+  if (!session || session.revokedAt) {
+    return { ok: false, message: "Invalid refresh token.", statusCode: 401 };
+  }
+
+  if (session.expiresAt < new Date())
+    return {
+      ok: false,
+      message: "Session has expired. Sign in to create a new one.",
+      statusCode: 401,
+    };
+
+  const isValid = await verifyHash(session.tokenHash, token);
+  if (!isValid) {
+    await db
+      .update(refreshTokens)
+      .set({ revokedAt: new Date() })
+      .where(eq(refreshTokens.id, session.id));
+    return { ok: false, message: "Invalid refresh token.", statusCode: 401 };
+  }
+
+  const user = (
+    await db
+      .select({ id: users.id, role: users.role })
+      .from(users)
+      .where(eq(users.id, session.userId))
+  )[0];
+  if (!user)
+    return {
+      ok: false,
+      message: "User not found",
+      statusCode: 404,
+    };
+
+  const accessToken = signAccessJWT({
+    role: user.role,
+    userId: user.id,
+  });
+
+  const sessionId = session.id;
+
+  const refreshToken = signRefreshJWT({
+    sessionId,
+    userId: user.id,
+  });
+
+  const refreshTokenHash = await generateHash(refreshToken);
+
+  await db
+    .update(refreshTokens)
+    .set({
+      expiresAt: new Date(
+        Date.now() +
+          parseInt(env.JWT_REFRESH_EXPIRES) *
+            MS_MAP[
+              env.JWT_REFRESH_EXPIRES[
+                env.JWT_REFRESH_EXPIRES.length - 1
+              ] as keyof typeof MS_MAP
+            ],
+      ),
+      tokenHash: refreshTokenHash,
+    })
+    .where(eq(refreshTokens.id, sessionId));
+
+  return {
+    ok: true,
+    data: { accessToken },
+    message: "",
+    statusCode: 200,
+    meta: {
+      refreshToken,
+    },
+  };
+}
+
+export async function logoutService(token: string): ServiceReturnType {
+  const payload = verifyRefreshJWT(token);
+
+  if (!payload)
+    return {
+      ok: true,
+      data: null,
+      message: "Log out successful.",
+      statusCode: 200,
+    };
+
+  await db.delete(refreshTokens).where(eq(refreshTokens.id, payload.sessionId));
+
+  return {
+    ok: true,
+    data: null,
+    message: "Log out successful.",
+    statusCode: 200,
+  };
+}
+
+export async function getAuthUserService(userId: string): ServiceReturnType {
+  const user = (
+    await db
+      .select({
+        id: users.id,
+        email: users.email,
+        createdAt: users.createdAt,
+        status: users.status,
+        role: users.role,
+      })
+      .from(users)
+      .where(eq(users.id, userId))
+  )[0];
+
+  if (!user)
+    return {
+      statusCode: 404,
+      ok: false,
+      message: "User not found.",
+    };
+
+  return {
+    ok: true,
+    message: "",
+    data: {
+      user,
+    },
+    statusCode: 200,
   };
 }

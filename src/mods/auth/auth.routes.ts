@@ -3,6 +3,7 @@ import { rateLimiter } from "../../lib/rate-limit";
 import { HOUR, MINUTE } from "../../constants";
 import {
   forgotPassword,
+  getAuthUser,
   logout,
   refresh,
   resendEmailVerification,
@@ -21,6 +22,7 @@ import {
   signupSchema,
   verifyEmailSchema,
 } from "./auth.schemas";
+import { requireAuth } from "../../middleware/auth";
 
 const routes: Router = Router();
 
@@ -82,6 +84,8 @@ routes.post(
 
 routes.post("/refresh", rateLimiter(MINUTE * 15, 30), refresh);
 
-routes.post("logout", logout);
+routes.post("/logout", logout);
+
+routes.get("/user", requireAuth, getAuthUser);
 
 export default routes;
