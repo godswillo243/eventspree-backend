@@ -1,156 +1,101 @@
 import { type Handler, type Request, type Response } from "express";
-import {
-  forgotPasswordService,
-  getAuthUserService,
-  logoutService,
-  refreshService,
-  resendEmailVerificationOTP,
-  resetPasswordService,
-  signinService,
-  signupService,
-  verifyEmailService,
-} from "./auth.services";
-import { getErrorResponse, getSuccessResponse } from "../../lib/utils";
-import { asyncHandler } from "../../lib/async-handler";
+
+import * as services from "./auth.services";
 import { DAY } from "../../constants";
 import { env } from "../../config/env";
+import { sendError, sendSuccess } from "../../utils/api-response";
+import { ApiError } from "../../utils/api-error";
 
-export const signup: Handler = asyncHandler(
-  async (req: Request, res: Response) => {
-    const result = await signupService(req.body);
-    res
-      .status(result.statusCode)
-      .json(
-        result.ok
-          ? getSuccessResponse(result.data, result.message)
-          : getErrorResponse(result.message),
-      );
-  },
-);
-export const signin: Handler = asyncHandler(
-  async (req: Request, res: Response) => {
-    const result = await signinService(req.body);
+export const signup: Handler = async (req: Request, res: Response) => {
+  const { data, message, statusCode, meta } = await services.signup(req.body);
+  sendSuccess(res, data, message, statusCode);
+};
+export const signin: Handler = async (req: Request, res: Response) => {
+  const { data, message, statusCode, meta } = await services.signin(req.body);
 
-    if (result.ok)
-      res.cookie("refreshToken", result.meta?.refreshToken, {
-        httpOnly: true,
-        sameSite: "strict",
-        maxAge: DAY * 30,
-        secure: env.NODE_ENV === "production",
-      });
+  res.cookie("refreshToken", meta?.refreshToken, {
+    httpOnly: true,
+    sameSite: "strict",
+    maxAge: DAY * 30,
+    secure: env.NODE_ENV === "production",
+  });
+  sendSuccess(res, data, message, statusCode);
+};
+export const signinWithGoogle: Handler = async (
+  req: Request,
+  res: Response,
+) => {
+  const { data, message, statusCode, meta } = await services.signinWithGoogle({
+    code: req.query.code as string,
+  });
 
-    res
-      .status(result.statusCode)
-      .json(
-        result.ok
-          ? getSuccessResponse(result.data, result.message)
-          : getErrorResponse(result.message),
-      );
-  },
-);
-export const verifyEmail: Handler = asyncHandler(
-  async (req: Request, res: Response) => {
-    const result = await verifyEmailService(req.body);
-    res
-      .status(result.statusCode)
-      .json(
-        result.ok
-          ? getSuccessResponse(result.data, result.message)
-          : getErrorResponse(result.message),
-      );
-  },
-);
+  res.cookie("refreshToken", meta?.refreshToken, {
+    httpOnly: true,
+    sameSite: "strict",
+    maxAge: DAY * 30,
+    secure: env.NODE_ENV === "production",
+  });
+  res.redirect(
+    `${env.CLIENT_URL}/google/callback?accessToken=${data.accessToken}`,
+  );
+  // sendSuccess(res, data, message, statusCode);
+};
 
-export const resendEmailVerification: Handler = asyncHandler(
-  async (req: Request, res: Response) => {
-    const result = await resendEmailVerificationOTP(req.body);
+export const verifyEmail: Handler = async (req: Request, res: Response) => {
+  const { data, message, statusCode } = await services.verifyEmail(req.body);
+  sendSuccess(res, data, message, statusCode);
+};
 
-    res
-      .status(result.statusCode)
-      .json(
-        result.ok
-          ? getSuccessResponse({ email: req.body.email }, result.message)
-          : getErrorResponse(result.message),
-      );
-  },
-);
+export const resendEmailVerification: Handler = async (
+  req: Request,
+  res: Response,
+) => {
+  const { data, message, statusCode } =
+    await services.resendEmailVerificationOTP(req.body);
 
-export const forgotPassword: Handler = asyncHandler(
-  async (req: Request, res: Response) => {
-    const result = await forgotPasswordService(req.body);
+  sendSuccess(res, data, message, statusCode);
+};
 
-    res
-      .status(result.statusCode)
-      .json(
-        result.ok
-          ? getSuccessResponse(null, result.message)
-          : getErrorResponse(result.message),
-      );
-  },
-);
+export const forgotPassword: Handler = async (req: Request, res: Response) => {
+  const { data, message, statusCode } = await services.forgotPassword(req.body);
 
-export const resetPassword: Handler = asyncHandler(
-  async (req: Request, res: Response) => {
-    const result = await resetPasswordService(req.body);
+  sendSuccess(res, data, message, statusCode);
+};
 
-    res
-      .status(result.statusCode)
-      .json(
-        result.ok
-          ? getSuccessResponse({ email: req.body.email }, result.message)
-          : getErrorResponse(result.message),
-      );
-  },
-);
-export const refresh: Handler = asyncHandler(
-  async (req: Request, res: Response) => {
-    const token = req.cookies.refreshToken;
-    const result = await refreshService(token);
+export const resetPassword: Handler = async (req: Request, res: Response) => {
+  const { data, message, statusCode } = await services.resetPassword(req.body);
 
-    if (result.ok)
-      res.cookie("refreshToken", result.meta?.refreshToken, {
-        httpOnly: true,
-        sameSite: "strict",
-        maxAge: DAY * 30,
-        secure: env.NODE_ENV === "production",
-      });
+  sendSuccess(res, data, message, statusCode);
+};
 
-    res
-      .status(result.statusCode)
-      .json(
-        result.ok
-          ? getSuccessResponse(result.data, result.message)
-          : getErrorResponse(result.message),
-      );
-  },
-);
+export const refresh: Handler = async (req: Request, res: Response) => {
+  const token = req.cookies.refreshToken;
+  const { data, message, statusCode, meta } = await services.refresh(token);
 
-export const logout = asyncHandler(async (req: Request, res: Response) => {
+  res.cookie("refreshToken", meta?.refreshToken, {
+    httpOnly: true,
+    sameSite: "strict",
+    maxAge: DAY * 30,
+    secure: env.NODE_ENV === "production",
+  });
+
+  sendSuccess(res, data, message, statusCode);
+};
+
+export const logout = async (req: Request, res: Response) => {
   const token = req.cookies.refreshToken;
 
-  const result = await logoutService(token);
+  const { data, message, statusCode } = await services.logout(token);
 
   res.clearCookie("refreshToken");
 
-  res
-    .status(result.statusCode)
-    .json(
-      result.ok
-        ? getSuccessResponse(result.data, result.message)
-        : getErrorResponse(result.message),
-    );
-});
-export const getAuthUser = asyncHandler(async (req: Request, res: Response) => {
+  sendSuccess(res, data, message, statusCode);
+};
+
+export const getAuthUser = async (req: Request, res: Response) => {
   if (!req.user)
-    return res.status(401).json({
-      message: "You are not authenticated. Sign in to continue.",
-    });
-  const result = await getAuthUserService(req.user.id);
-  res
-    .status(result.statusCode)
-    .json(
-      result.ok
-        ? getSuccessResponse(result.data, result.message)
-        : getErrorResponse(result.message),
-    );
-});
+    throw new ApiError(401, "You are not authenticated. Sign in to continue");
+
+  const { data, message, statusCode } = await services.getAuthUser(req.user.id);
+  sendSuccess(res, data, message, statusCode);
+};

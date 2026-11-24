@@ -2,9 +2,10 @@ import type { OTPRecord, OTPType } from "../../db/types";
 import { db } from "../../db/client";
 import { otpRecords } from "../../db/schema";
 import { and, eq } from "drizzle-orm";
-import { verifyHash } from "../../lib/password";
+import { verifyHash } from "../../utils/password";
 import { env } from "../../config/env";
 import { MS_MAP } from "../../constants";
+import type { StringValue } from "ms";
 
 export async function upsertOTP({
   expiresAt,
@@ -70,4 +71,9 @@ export function getRefreshExpiry(): Date {
   const raw = env.JWT_REFRESH_EXPIRES;
   const unit = raw[raw.length - 1] as keyof typeof MS_MAP;
   return new Date(Date.now() + parseInt(raw) * MS_MAP[unit]);
+}
+export function parseDuration(value: string | StringValue): number {
+  return (
+    parseInt(value) * MS_MAP[value[value.length - 1] as keyof typeof MS_MAP]
+  );
 }

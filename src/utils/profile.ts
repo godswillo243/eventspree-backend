@@ -1,10 +1,6 @@
 import { eq } from "drizzle-orm";
 import { db } from "../db/client";
-import {
-  vendorProfiles,
-  organizerProfiles,
-  venueProviderProfiles,
-} from "../db/schema";
+import { vendorProfiles, organizerProfiles, venueProfiles } from "../db/schema";
 
 export async function getUserProfiles(userId: string) {
   const vendorProfile = (
@@ -16,9 +12,9 @@ export async function getUserProfiles(userId: string) {
 
   const venueProviderProfile = (
     await db
-      .select({ id: venueProviderProfiles.id })
-      .from(venueProviderProfiles)
-      .where(eq(venueProviderProfiles.userId, userId))
+      .select({ id: venueProfiles.id })
+      .from(venueProfiles)
+      .where(eq(venueProfiles.userId, userId))
   )[0];
 
   const organizerProfile = (

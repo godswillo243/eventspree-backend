@@ -1,19 +1,21 @@
 import type { Handler } from "express";
 import type { UserRole } from "../db/types";
-import { getErrorResponse } from "../lib/utils";
-import { verifyAccessJWT } from "../lib/jwt";
+import { sendError } from "../utils/api-response";
+import { verifyAccessJWT } from "../utils/jwt";
 
 export const requireAuth: Handler = (req, res, next) => {
   const token = req.headers.authorization?.split(" ")?.[1];
 
   if (!token) {
-    return res.status(401).json(getErrorResponse("Missing access token."));
+    sendError(res, "Missing access token.", 401);
+    return;
   }
 
   const payload = verifyAccessJWT(token);
 
   if (!payload) {
-    return res.status(401).json(getErrorResponse("Invalid access token."));
+    sendError(res, "Invalid access token.", 401);
+    return;
   }
 
   req.user = {
@@ -27,14 +29,8 @@ export const requireAuth: Handler = (req, res, next) => {
 export function requireRole(role: UserRole): Handler {
   return (req, res, next) => {
     if (req.user?.role !== role) {
-      return res
-        .status(403)
-        .json(
-          getErrorResponse(
-            "You are not authorized to access this route.",
-            "UNAUTHORIZED",
-          ),
-        );
+      sendError(res, "You are not authorized to access this route.", 403);
+      return;
     }
     next();
   };

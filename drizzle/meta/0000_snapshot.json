@@ -1,5 +1,5 @@
 {
-  "id": "4069c510-e813-4144-a1c9-2c8d6fe50c8a",
+  "id": "0078973f-ac15-465e-9c26-44bd031b416f",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "version": "7",
   "dialect": "postgresql",
@@ -35,16 +35,23 @@
         },
         "google_auth_id": {
           "name": "google_auth_id",
-          "type": "varchar(100)",
+          "type": "varchar(255)",
           "primaryKey": false,
           "notNull": false
         },
-        "is_staff": {
-          "name": "is_staff",
-          "type": "boolean",
+        "name": {
+          "name": "name",
+          "type": "varchar(30)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "role": {
+          "name": "role",
+          "type": "user_role",
+          "typeSchema": "public",
           "primaryKey": false,
           "notNull": true,
-          "default": false
+          "default": "'user'"
         },
         "status": {
           "name": "status",
@@ -66,6 +73,13 @@
           "primaryKey": false,
           "notNull": true,
           "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
         }
       },
       "indexes": {},
@@ -77,6 +91,13 @@
           "nullsNotDistinct": false,
           "columns": [
             "email"
+          ]
+        },
+        "users_google_auth_id_unique": {
+          "name": "users_google_auth_id_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "google_auth_id"
           ]
         }
       },
@@ -103,7 +124,13 @@
         },
         "token_hash": {
           "name": "token_hash",
-          "type": "text",
+          "type": "varchar(255)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "family_id": {
+          "name": "family_id",
+          "type": "uuid",
           "primaryKey": false,
           "notNull": true
         },
@@ -116,6 +143,12 @@
         "revoked_at": {
           "name": "revoked_at",
           "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "replaced_by_token_id": {
+          "name": "replaced_by_token_id",
+          "type": "uuid",
           "primaryKey": false,
           "notNull": false
         },
@@ -133,6 +166,21 @@
           "columns": [
             {
               "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "refresh_tokens_family_idx": {
+          "name": "refresh_tokens_family_idx",
+          "columns": [
+            {
+              "expression": "family_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -160,7 +208,15 @@
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
+      "uniqueConstraints": {
+        "refresh_tokens_token_hash_unique": {
+          "name": "refresh_tokens_token_hash_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "token_hash"
+          ]
+        }
+      },
       "policies": {},
       "checkConstraints": {},
       "isRLSEnabled": false
@@ -182,12 +238,6 @@
           "primaryKey": false,
           "notNull": true
         },
-        "code_hash": {
-          "name": "code_hash",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
         "type": {
           "name": "type",
           "type": "otp_type",
@@ -195,24 +245,11 @@
           "primaryKey": false,
           "notNull": true
         },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "expires_at": {
-          "name": "expires_at",
-          "type": "timestamp with time zone",
+        "code_hash": {
+          "name": "code_hash",
+          "type": "varchar(255)",
           "primaryKey": false,
           "notNull": true
-        },
-        "consumed_at": {
-          "name": "consumed_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
         },
         "attempts": {
           "name": "attempts",
@@ -227,6 +264,25 @@
           "primaryKey": false,
           "notNull": true,
           "default": 5
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "consumed_at": {
+          "name": "consumed_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
         }
       },
       "indexes": {
@@ -273,7 +329,7 @@
       "checkConstraints": {
         "otp_records_attempts_check": {
           "name": "otp_records_attempts_check",
-          "value": "attempts >= 0 AND max_attempts > 0"
+          "value": "\"otp_records\".\"attempts\" >= 0"
         }
       },
       "isRLSEnabled": false
@@ -295,14 +351,33 @@
           "primaryKey": false,
           "notNull": true
         },
-        "display_name": {
-          "name": "display_name",
-          "type": "varchar(255)",
+        "full_name": {
+          "name": "full_name",
+          "type": "varchar(150)",
           "primaryKey": false,
           "notNull": true
         },
+        "state": {
+          "name": "state",
+          "type": "varchar(50)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "city": {
+          "name": "city",
+          "type": "varchar(50)",
+          "primaryKey": false,
+          "notNull": false
+        },
         "created_at": {
           "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": true,
@@ -321,7 +396,7 @@
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
+          "onDelete": "cascade",
           "onUpdate": "no action"
         }
       },
@@ -358,7 +433,7 @@
         },
         "business_name": {
           "name": "business_name",
-          "type": "varchar(255)",
+          "type": "varchar(150)",
           "primaryKey": false,
           "notNull": true
         },
@@ -368,27 +443,15 @@
           "primaryKey": false,
           "notNull": false
         },
-        "contact_email": {
-          "name": "contact_email",
-          "type": "varchar(255)",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "contact_phone": {
-          "name": "contact_phone",
-          "type": "varchar(20)",
-          "primaryKey": false,
-          "notNull": true
-        },
         "state": {
           "name": "state",
-          "type": "varchar(100)",
+          "type": "varchar(50)",
           "primaryKey": false,
           "notNull": false
         },
         "city": {
           "name": "city",
-          "type": "varchar(100)",
+          "type": "varchar(50)",
           "primaryKey": false,
           "notNull": false
         },
@@ -399,16 +462,9 @@
           "notNull": true,
           "default": "'[]'::jsonb"
         },
-        "blocked_dates": {
-          "name": "blocked_dates",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'[]'::jsonb"
-        },
         "bank_code": {
           "name": "bank_code",
-          "type": "varchar(20)",
+          "type": "varchar(10)",
           "primaryKey": false,
           "notNull": false
         },
@@ -424,19 +480,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "subaccount_code": {
-          "name": "subaccount_code",
-          "type": "varchar(100)",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "payouts_enabled": {
-          "name": "payouts_enabled",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
-        },
         "verification_status": {
           "name": "verification_status",
           "type": "verification_status",
@@ -451,8 +494,22 @@
           "primaryKey": false,
           "notNull": false
         },
+        "payouts_enabled": {
+          "name": "payouts_enabled",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
         "created_at": {
           "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": true,
@@ -487,7 +544,7 @@
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
+          "onDelete": "cascade",
           "onUpdate": "no action"
         }
       },
@@ -502,11 +559,16 @@
         }
       },
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "vendor_profiles_payouts_check": {
+          "name": "vendor_profiles_payouts_check",
+          "value": "\"vendor_profiles\".\"payouts_enabled\" = false OR \"vendor_profiles\".\"verification_status\" = 'approved'"
+        }
+      },
       "isRLSEnabled": false
     },
-    "public.venue_provider_profiles": {
-      "name": "venue_provider_profiles",
+    "public.venue_profiles": {
+      "name": "venue_profiles",
       "schema": "",
       "columns": {
         "id": {
@@ -524,27 +586,27 @@
         },
         "company_name": {
           "name": "company_name",
-          "type": "varchar(255)",
+          "type": "varchar(150)",
           "primaryKey": false,
           "notNull": true
         },
-        "contact_name": {
-          "name": "contact_name",
-          "type": "varchar(255)",
+        "description": {
+          "name": "description",
+          "type": "varchar(2000)",
           "primaryKey": false,
-          "notNull": true
+          "notNull": false
         },
-        "contact_email": {
-          "name": "contact_email",
-          "type": "varchar(255)",
+        "state": {
+          "name": "state",
+          "type": "varchar(50)",
           "primaryKey": false,
-          "notNull": true
+          "notNull": false
         },
-        "contact_phone": {
-          "name": "contact_phone",
-          "type": "varchar(20)",
+        "city": {
+          "name": "city",
+          "type": "varchar(50)",
           "primaryKey": false,
-          "notNull": true
+          "notNull": false
         },
         "kyc_documents": {
           "name": "kyc_documents",
@@ -555,22 +617,9 @@
         },
         "bank_code": {
           "name": "bank_code",
-          "type": "varchar(20)",
+          "type": "varchar(10)",
           "primaryKey": false,
           "notNull": false
-        },
-        "subaccount_code": {
-          "name": "subaccount_code",
-          "type": "varchar(100)",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "payouts_enabled": {
-          "name": "payouts_enabled",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": false
         },
         "account_number": {
           "name": "account_number",
@@ -598,8 +647,22 @@
           "primaryKey": false,
           "notNull": false
         },
+        "payouts_enabled": {
+          "name": "payouts_enabled",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
         "created_at": {
           "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": true,
@@ -624,9 +687,9 @@
         }
       },
       "foreignKeys": {
-        "venue_provider_profiles_user_id_users_id_fk": {
-          "name": "venue_provider_profiles_user_id_users_id_fk",
-          "tableFrom": "venue_provider_profiles",
+        "venue_profiles_user_id_users_id_fk": {
+          "name": "venue_profiles_user_id_users_id_fk",
+          "tableFrom": "venue_profiles",
           "tableTo": "users",
           "columnsFrom": [
             "user_id"
@@ -634,14 +697,14 @@
           "columnsTo": [
             "id"
           ],
-          "onDelete": "no action",
+          "onDelete": "cascade",
           "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
       "uniqueConstraints": {
-        "venue_provider_profiles_user_id_unique": {
-          "name": "venue_provider_profiles_user_id_unique",
+        "venue_profiles_user_id_unique": {
+          "name": "venue_profiles_user_id_unique",
           "nullsNotDistinct": false,
           "columns": [
             "user_id"
@@ -649,7 +712,12 @@
         }
       },
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "venue_provider_profiles_payouts_check": {
+          "name": "venue_provider_profiles_payouts_check",
+          "value": "\"venue_profiles\".\"payouts_enabled\" = false OR \"venue_profiles\".\"verification_status\" = 'approved'"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.categories": {
@@ -663,13 +731,6 @@
           "notNull": true,
           "default": "gen_random_uuid()"
         },
-        "applies_to": {
-          "name": "applies_to",
-          "type": "target_type",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true
-        },
         "name": {
           "name": "name",
           "type": "varchar(100)",
@@ -678,7 +739,14 @@
         },
         "slug": {
           "name": "slug",
-          "type": "varchar(100)",
+          "type": "varchar(120)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "applies_to": {
+          "name": "applies_to",
+          "type": "target_type",
+          "typeSchema": "public",
           "primaryKey": false,
           "notNull": true
         },
@@ -688,13 +756,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "is_active": {
-          "name": "is_active",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "default": true
-        },
         "display_order": {
           "name": "display_order",
           "type": "integer",
@@ -702,8 +763,22 @@
           "notNull": true,
           "default": 0
         },
+        "is_active": {
+          "name": "is_active",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": true
+        },
         "created_at": {
           "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": true,
@@ -711,8 +786,8 @@
         }
       },
       "indexes": {
-        "categories_slug_applies_to_idx": {
-          "name": "categories_slug_applies_to_idx",
+        "categories_slug_applies_to_uq": {
+          "name": "categories_slug_applies_to_uq",
           "columns": [
             {
               "expression": "slug",
@@ -728,27 +803,6 @@
             }
           ],
           "isUnique": true,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "categories_applies_to_active_idx": {
-          "name": "categories_applies_to_active_idx",
-          "columns": [
-            {
-              "expression": "applies_to",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "is_active",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -798,15 +852,15 @@
         },
         "price_min": {
           "name": "price_min",
-          "type": "integer",
+          "type": "bigint",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "price_max": {
           "name": "price_max",
-          "type": "integer",
+          "type": "bigint",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "price_unit": {
           "name": "price_unit",
@@ -816,6 +870,18 @@
           "notNull": true,
           "default": "'fixed'"
         },
+        "state": {
+          "name": "state",
+          "type": "varchar(50)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "city": {
+          "name": "city",
+          "type": "varchar(50)",
+          "primaryKey": false,
+          "notNull": false
+        },
         "portfolio_images": {
           "name": "portfolio_images",
           "type": "jsonb",
@@ -823,12 +889,12 @@
           "notNull": true,
           "default": "'[]'::jsonb"
         },
-        "is_active": {
-          "name": "is_active",
-          "type": "boolean",
+        "blocked_dates": {
+          "name": "blocked_dates",
+          "type": "jsonb",
           "primaryKey": false,
           "notNull": true,
-          "default": true
+          "default": "'[]'::jsonb"
         },
         "verification_status": {
           "name": "verification_status",
@@ -840,16 +906,22 @@
         },
         "rejection_reason": {
           "name": "rejection_reason",
-          "type": "varchar(1000)",
+          "type": "varchar(1600)",
           "primaryKey": false,
           "notNull": false
+        },
+        "is_active": {
+          "name": "is_active",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": true
         },
         "rating_avg": {
           "name": "rating_avg",
           "type": "numeric(3, 2)",
           "primaryKey": false,
-          "notNull": true,
-          "default": "'0'"
+          "notNull": false
         },
         "rating_count": {
           "name": "rating_count",
@@ -874,8 +946,8 @@
         }
       },
       "indexes": {
-        "vendor_listings_vendor_idx": {
-          "name": "vendor_listings_vendor_idx",
+        "vendor_listings_profile_idx": {
+          "name": "vendor_listings_profile_idx",
           "columns": [
             {
               "expression": "vendor_profile_id",
@@ -904,11 +976,17 @@
           "method": "btree",
           "with": {}
         },
-        "vendor_listings_status_idx": {
-          "name": "vendor_listings_status_idx",
+        "vendor_listings_visibility_idx": {
+          "name": "vendor_listings_visibility_idx",
           "columns": [
             {
               "expression": "verification_status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "is_active",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -919,11 +997,17 @@
           "method": "btree",
           "with": {}
         },
-        "vendor_listings_active_idx": {
-          "name": "vendor_listings_active_idx",
+        "vendor_listings_location_idx": {
+          "name": "vendor_listings_location_idx",
           "columns": [
             {
-              "expression": "is_active",
+              "expression": "state",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "city",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -946,7 +1030,7 @@
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
+          "onDelete": "no action",
           "onUpdate": "no action"
         },
         "vendor_listings_category_id_categories_id_fk": {
@@ -959,7 +1043,7 @@
           "columnsTo": [
             "id"
           ],
-          "onDelete": "restrict",
+          "onDelete": "no action",
           "onUpdate": "no action"
         }
       },
@@ -967,17 +1051,9 @@
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {
-        "vendor_listings_price_range_check": {
-          "name": "vendor_listings_price_range_check",
-          "value": "(price_min IS NULL OR price_min >= 0)\n        AND (price_max IS NULL OR price_max >= 0)\n        AND (price_min IS NULL OR price_max IS NULL OR price_min <= price_max)"
-        },
-        "vendor_listings_rating_avg_check": {
-          "name": "vendor_listings_rating_avg_check",
-          "value": "rating_avg >= 0 AND rating_avg <= 5"
-        },
-        "vendor_listings_rating_count_check": {
-          "name": "vendor_listings_rating_count_check",
-          "value": "rating_count >= 0"
+        "vendor_listings_price_check": {
+          "name": "vendor_listings_price_check",
+          "value": "\"vendor_listings\".\"price_min\" >= 0 AND \"vendor_listings\".\"price_max\" >= \"vendor_listings\".\"price_min\""
         }
       },
       "isRLSEnabled": false
@@ -993,8 +1069,14 @@
           "notNull": true,
           "default": "gen_random_uuid()"
         },
-        "venue_provider_id": {
-          "name": "venue_provider_id",
+        "venue_profile_id": {
+          "name": "venue_profile_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "venue_type_id": {
+          "name": "venue_type_id",
           "type": "uuid",
           "primaryKey": false,
           "notNull": true
@@ -1011,27 +1093,21 @@
           "primaryKey": false,
           "notNull": false
         },
-        "venue_type_id": {
-          "name": "venue_type_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
         "address": {
           "name": "address",
-          "type": "varchar(500)",
+          "type": "varchar(300)",
           "primaryKey": false,
           "notNull": true
         },
         "state": {
           "name": "state",
-          "type": "varchar(100)",
+          "type": "varchar(50)",
           "primaryKey": false,
           "notNull": false
         },
         "city": {
           "name": "city",
-          "type": "varchar(100)",
+          "type": "varchar(50)",
           "primaryKey": false,
           "notNull": false
         },
@@ -1056,15 +1132,23 @@
         },
         "price_min": {
           "name": "price_min",
-          "type": "integer",
+          "type": "bigint",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "price_max": {
           "name": "price_max",
-          "type": "integer",
+          "type": "bigint",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
+        },
+        "price_unit": {
+          "name": "price_unit",
+          "type": "price_unit",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'per_day'"
         },
         "portfolio_images": {
           "name": "portfolio_images",
@@ -1094,12 +1178,18 @@
           "primaryKey": false,
           "notNull": false
         },
+        "is_active": {
+          "name": "is_active",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": true
+        },
         "rating_avg": {
           "name": "rating_avg",
           "type": "numeric(3, 2)",
           "primaryKey": false,
-          "notNull": true,
-          "default": "'0'"
+          "notNull": false
         },
         "rating_count": {
           "name": "rating_count",
@@ -1114,14 +1204,21 @@
           "primaryKey": false,
           "notNull": true,
           "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
         }
       },
       "indexes": {
-        "venues_provider_idx": {
-          "name": "venues_provider_idx",
+        "venues_idx": {
+          "name": "venues_idx",
           "columns": [
             {
-              "expression": "venue_provider_id",
+              "expression": "venue_profile_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -1132,23 +1229,8 @@
           "method": "btree",
           "with": {}
         },
-        "venues_status_idx": {
-          "name": "venues_status_idx",
-          "columns": [
-            {
-              "expression": "verification_status",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "venues_venue_type_idx": {
-          "name": "venues_venue_type_idx",
+        "venues_type_idx": {
+          "name": "venues_type_idx",
           "columns": [
             {
               "expression": "venue_type_id",
@@ -1161,20 +1243,62 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
+        },
+        "venues_visibility_idx": {
+          "name": "venues_visibility_idx",
+          "columns": [
+            {
+              "expression": "verification_status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "is_active",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "venues_location_idx": {
+          "name": "venues_location_idx",
+          "columns": [
+            {
+              "expression": "state",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "city",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {
-        "venues_venue_provider_id_venue_provider_profiles_id_fk": {
-          "name": "venues_venue_provider_id_venue_provider_profiles_id_fk",
+        "venues_venue_profile_id_venue_profiles_id_fk": {
+          "name": "venues_venue_profile_id_venue_profiles_id_fk",
           "tableFrom": "venues",
-          "tableTo": "venue_provider_profiles",
+          "tableTo": "venue_profiles",
           "columnsFrom": [
-            "venue_provider_id"
+            "venue_profile_id"
           ],
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
+          "onDelete": "no action",
           "onUpdate": "no action"
         },
         "venues_venue_type_id_categories_id_fk": {
@@ -1187,7 +1311,7 @@
           "columnsTo": [
             "id"
           ],
-          "onDelete": "restrict",
+          "onDelete": "no action",
           "onUpdate": "no action"
         }
       },
@@ -1195,21 +1319,13 @@
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {
-        "venues_capacity_range_check": {
-          "name": "venues_capacity_range_check",
-          "value": "(capacity_min IS NULL OR capacity_min >= 0)\n        AND (capacity_max IS NULL OR capacity_max >= 0)\n        AND (capacity_min IS NULL OR capacity_max IS NULL OR capacity_min <= capacity_max)"
+        "venues_price_check": {
+          "name": "venues_price_check",
+          "value": "\"venues\".\"price_min\" >= 0 AND \"venues\".\"price_max\" >= \"venues\".\"price_min\""
         },
-        "venues_price_range_check": {
-          "name": "venues_price_range_check",
-          "value": "(price_min IS NULL OR price_min >= 0)\n        AND (price_max IS NULL OR price_max >= 0)\n        AND (price_min IS NULL OR price_max IS NULL OR price_min <= price_max)"
-        },
-        "venues_rating_avg_check": {
-          "name": "venues_rating_avg_check",
-          "value": "rating_avg >= 0 AND rating_avg <= 5"
-        },
-        "venues_rating_count_check": {
-          "name": "venues_rating_count_check",
-          "value": "rating_count >= 0"
+        "venues_capacity_check": {
+          "name": "venues_capacity_check",
+          "value": "(\"venues\".\"capacity_min\" IS NULL OR \"venues\".\"capacity_min\" > 0)\n        AND (\"venues\".\"capacity_max\" IS NULL OR \"venues\".\"capacity_max\" > 0)\n        AND (\"venues\".\"capacity_min\" IS NULL OR \"venues\".\"capacity_max\" IS NULL OR \"venues\".\"capacity_max\" >= \"venues\".\"capacity_min\")"
         }
       },
       "isRLSEnabled": false
@@ -1237,6 +1353,12 @@
           "primaryKey": false,
           "notNull": true
         },
+        "description": {
+          "name": "description",
+          "type": "varchar(2000)",
+          "primaryKey": false,
+          "notNull": false
+        },
         "event_type": {
           "name": "event_type",
           "type": "varchar(100)",
@@ -1251,27 +1373,28 @@
         },
         "location": {
           "name": "location",
-          "type": "varchar(255)",
+          "type": "jsonb",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
-        "city": {
-          "name": "city",
-          "type": "varchar(100)",
+        "guest_count": {
+          "name": "guest_count",
+          "type": "integer",
           "primaryKey": false,
-          "notNull": false
-        },
-        "state": {
-          "name": "state",
-          "type": "varchar(100)",
-          "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "budget": {
           "name": "budget",
-          "type": "integer",
+          "type": "bigint",
           "primaryKey": false,
           "notNull": false
+        },
+        "is_active": {
+          "name": "is_active",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": true
         },
         "created_at": {
           "name": "created_at",
@@ -1279,9 +1402,38 @@
           "primaryKey": false,
           "notNull": true,
           "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
         }
       },
-      "indexes": {},
+      "indexes": {
+        "events_organizer_date_idx": {
+          "name": "events_organizer_date_idx",
+          "columns": [
+            {
+              "expression": "organizer_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "event_date",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {
         "events_organizer_id_users_id_fk": {
           "name": "events_organizer_id_users_id_fk",
@@ -1300,7 +1452,16 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "events_budget_check": {
+          "name": "events_budget_check",
+          "value": "\"events\".\"budget\" IS NULL OR \"events\".\"budget\" >= 0"
+        },
+        "events_guest_count_check": {
+          "name": "events_guest_count_check",
+          "value": "\"events\".\"guest_count\" > 0"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.inquiries": {
@@ -1314,22 +1475,21 @@
           "notNull": true,
           "default": "gen_random_uuid()"
         },
-        "event_id": {
-          "name": "event_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
         "organizer_id": {
           "name": "organizer_id",
           "type": "uuid",
           "primaryKey": false,
           "notNull": true
         },
-        "target_type": {
-          "name": "target_type",
-          "type": "target_type",
-          "typeSchema": "public",
+        "provider_id": {
+          "name": "provider_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "event_id": {
+          "name": "event_id",
+          "type": "uuid",
           "primaryKey": false,
           "notNull": true
         },
@@ -1381,6 +1541,51 @@
         }
       },
       "indexes": {
+        "inquiries_organizer_idx": {
+          "name": "inquiries_organizer_idx",
+          "columns": [
+            {
+              "expression": "organizer_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "inquiries_provider_idx": {
+          "name": "inquiries_provider_idx",
+          "columns": [
+            {
+              "expression": "provider_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "inquiries_event_idx": {
+          "name": "inquiries_event_idx",
+          "columns": [
+            {
+              "expression": "event_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
         "inquiries_vendor_listing_idx": {
           "name": "inquiries_vendor_listing_idx",
           "columns": [
@@ -1411,42 +1616,84 @@
           "method": "btree",
           "with": {}
         },
-        "inquiries_organizer_idx": {
-          "name": "inquiries_organizer_idx",
+        "inquiries_one_open_per_event_vendor_uq": {
+          "name": "inquiries_one_open_per_event_vendor_uq",
           "columns": [
             {
-              "expression": "organizer_id",
+              "expression": "event_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "vendor_listing_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
             }
           ],
-          "isUnique": false,
+          "isUnique": true,
+          "where": "\"inquiries\".\"status\" = 'open' AND \"inquiries\".\"vendor_listing_id\" IS NOT NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "inquiries_one_open_per_event_venue_uq": {
+          "name": "inquiries_one_open_per_event_venue_uq",
+          "columns": [
+            {
+              "expression": "event_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "venue_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"inquiries\".\"status\" = 'open' AND \"inquiries\".\"venue_id\" IS NOT NULL",
           "concurrently": false,
           "method": "btree",
           "with": {}
         }
       },
       "foreignKeys": {
-        "inquiries_event_id_events_id_fk": {
-          "name": "inquiries_event_id_events_id_fk",
-          "tableFrom": "inquiries",
-          "tableTo": "events",
-          "columnsFrom": [
-            "event_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
         "inquiries_organizer_id_users_id_fk": {
           "name": "inquiries_organizer_id_users_id_fk",
           "tableFrom": "inquiries",
           "tableTo": "users",
           "columnsFrom": [
             "organizer_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "inquiries_provider_id_users_id_fk": {
+          "name": "inquiries_provider_id_users_id_fk",
+          "tableFrom": "inquiries",
+          "tableTo": "users",
+          "columnsFrom": [
+            "provider_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "inquiries_event_id_events_id_fk": {
+          "name": "inquiries_event_id_events_id_fk",
+          "tableFrom": "inquiries",
+          "tableTo": "events",
+          "columnsFrom": [
+            "event_id"
           ],
           "columnsTo": [
             "id"
@@ -1498,13 +1745,9 @@
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {
-        "inquiries_exactly_one_target": {
-          "name": "inquiries_exactly_one_target",
-          "value": "(vendor_listing_id IS NOT NULL AND venue_id IS NULL) OR (vendor_listing_id IS NULL AND venue_id IS NOT NULL)"
-        },
-        "inquiries_target_matches_type": {
-          "name": "inquiries_target_matches_type",
-          "value": "(target_type = vendor AND vendor_listing_id IS NOT NULL AND venue_id IS NULL)\n        OR (target_type = venue AND venue_id IS NOT NULL AND vendor_listing_id IS NULL)"
+        "inquiries_one_target_check": {
+          "name": "inquiries_one_target_check",
+          "value": "(\"inquiries\".\"vendor_listing_id\" IS NOT NULL AND \"inquiries\".\"venue_id\" IS NULL) OR (\"inquiries\".\"vendor_listing_id\" IS NULL AND \"inquiries\".\"venue_id\" IS NOT NULL)"
         }
       },
       "isRLSEnabled": false
@@ -1538,9 +1781,9 @@
           "primaryKey": false,
           "notNull": true
         },
-        "proposed_price": {
-          "name": "proposed_price",
-          "type": "integer",
+        "offer_amount": {
+          "name": "offer_amount",
+          "type": "bigint",
           "primaryKey": false,
           "notNull": false
         },
@@ -1560,8 +1803,29 @@
         }
       },
       "indexes": {
-        "messages_inquiry_idx": {
-          "name": "messages_inquiry_idx",
+        "messages_inquiry_created_idx": {
+          "name": "messages_inquiry_created_idx",
+          "columns": [
+            {
+              "expression": "inquiry_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "messages_one_pending_offer_per_inquiry": {
+          "name": "messages_one_pending_offer_per_inquiry",
           "columns": [
             {
               "expression": "inquiry_id",
@@ -1570,7 +1834,8 @@
               "nulls": "last"
             }
           ],
-          "isUnique": false,
+          "isUnique": true,
+          "where": "\"messages\".\"offer_status\" = 'pending'",
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -1607,7 +1872,12 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "messages_offer_consistency": {
+          "name": "messages_offer_consistency",
+          "value": "(\"messages\".\"offer_amount\" IS NULL AND \"messages\".\"offer_status\" IS NULL) OR (\"messages\".\"offer_amount\" IS NOT NULL AND \"messages\".\"offer_status\" IS NOT NULL AND \"messages\".\"offer_amount\" > 0)"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.bookings": {
@@ -1621,8 +1891,14 @@
           "notNull": true,
           "default": "gen_random_uuid()"
         },
-        "inquiry_id": {
-          "name": "inquiry_id",
+        "organizer_id": {
+          "name": "organizer_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "provider_id": {
+          "name": "provider_id",
           "type": "uuid",
           "primaryKey": false,
           "notNull": true
@@ -1633,18 +1909,11 @@
           "primaryKey": false,
           "notNull": true
         },
-        "organizer_id": {
-          "name": "organizer_id",
+        "inquiry_id": {
+          "name": "inquiry_id",
           "type": "uuid",
           "primaryKey": false,
-          "notNull": true
-        },
-        "target_type": {
-          "name": "target_type",
-          "type": "target_type",
-          "typeSchema": "public",
-          "primaryKey": false,
-          "notNull": true
+          "notNull": false
         },
         "vendor_listing_id": {
           "name": "vendor_listing_id",
@@ -1658,37 +1927,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "provider_id": {
-          "name": "provider_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "agreed_price": {
-          "name": "agreed_price",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "commission_rate": {
-          "name": "commission_rate",
-          "type": "numeric(5, 4)",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'0.05'"
-        },
-        "commission_amount": {
-          "name": "commission_amount",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "payout_amount": {
-          "name": "payout_amount",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
         "status": {
           "name": "status",
           "type": "booking_status",
@@ -1697,26 +1935,62 @@
           "notNull": true,
           "default": "'pending_payment'"
         },
-        "vendor_marked_complete_at": {
-          "name": "vendor_marked_complete_at",
+        "agreed_price": {
+          "name": "agreed_price",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "commission_rate": {
+          "name": "commission_rate",
+          "type": "numeric(5, 4)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "commission_amount": {
+          "name": "commission_amount",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "payout_amount": {
+          "name": "payout_amount",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "provider_completed_at": {
+          "name": "provider_completed_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
         },
-        "organizer_confirmed_complete_at": {
-          "name": "organizer_confirmed_complete_at",
+        "organizer_completed_at": {
+          "name": "organizer_completed_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
         },
-        "confirmed_at": {
-          "name": "confirmed_at",
+        "paid_out_at": {
+          "name": "paid_out_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
         },
-        "cancelled_at": {
-          "name": "cancelled_at",
+        "payout_reference": {
+          "name": "payout_reference",
+          "type": "varchar(255)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "dispute_reason": {
+          "name": "dispute_reason",
+          "type": "varchar(2000)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "disputed_at": {
+          "name": "disputed_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
@@ -1727,39 +2001,16 @@
           "primaryKey": false,
           "notNull": true,
           "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
         }
       },
       "indexes": {
-        "bookings_vendor_listing_idx": {
-          "name": "bookings_vendor_listing_idx",
-          "columns": [
-            {
-              "expression": "vendor_listing_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "bookings_venue_idx": {
-          "name": "bookings_venue_idx",
-          "columns": [
-            {
-              "expression": "venue_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
         "bookings_organizer_idx": {
           "name": "bookings_organizer_idx",
           "columns": [
@@ -1790,6 +2041,51 @@
           "method": "btree",
           "with": {}
         },
+        "bookings_event_idx": {
+          "name": "bookings_event_idx",
+          "columns": [
+            {
+              "expression": "event_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "bookings_vendor_listing_idx": {
+          "name": "bookings_vendor_listing_idx",
+          "columns": [
+            {
+              "expression": "vendor_listing_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "bookings_venue_idx": {
+          "name": "bookings_venue_idx",
+          "columns": [
+            {
+              "expression": "venue_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
         "bookings_status_idx": {
           "name": "bookings_status_idx",
           "columns": [
@@ -1804,15 +2100,44 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
+        },
+        "bookings_payouts_due_idx": {
+          "name": "bookings_payouts_due_idx",
+          "columns": [
+            {
+              "expression": "updated_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"bookings\".\"status\" = 'completed' AND \"bookings\".\"paid_out_at\" IS NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {
-        "bookings_inquiry_id_inquiries_id_fk": {
-          "name": "bookings_inquiry_id_inquiries_id_fk",
+        "bookings_organizer_id_users_id_fk": {
+          "name": "bookings_organizer_id_users_id_fk",
           "tableFrom": "bookings",
-          "tableTo": "inquiries",
+          "tableTo": "users",
           "columnsFrom": [
-            "inquiry_id"
+            "organizer_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "bookings_provider_id_users_id_fk": {
+          "name": "bookings_provider_id_users_id_fk",
+          "tableFrom": "bookings",
+          "tableTo": "users",
+          "columnsFrom": [
+            "provider_id"
           ],
           "columnsTo": [
             "id"
@@ -1833,12 +2158,12 @@
           "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "bookings_organizer_id_users_id_fk": {
-          "name": "bookings_organizer_id_users_id_fk",
+        "bookings_inquiry_id_inquiries_id_fk": {
+          "name": "bookings_inquiry_id_inquiries_id_fk",
           "tableFrom": "bookings",
-          "tableTo": "users",
+          "tableTo": "inquiries",
           "columnsFrom": [
-            "organizer_id"
+            "inquiry_id"
           ],
           "columnsTo": [
             "id"
@@ -1871,40 +2196,31 @@
           ],
           "onDelete": "no action",
           "onUpdate": "no action"
-        },
-        "bookings_provider_id_users_id_fk": {
-          "name": "bookings_provider_id_users_id_fk",
-          "tableFrom": "bookings",
-          "tableTo": "users",
-          "columnsFrom": [
-            "provider_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {
-        "bookings_inquiry_id_unique": {
-          "name": "bookings_inquiry_id_unique",
-          "nullsNotDistinct": false,
-          "columns": [
-            "inquiry_id"
-          ]
-        }
-      },
+      "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {
-        "bookings_exactly_one_target": {
-          "name": "bookings_exactly_one_target",
-          "value": "(vendor_listing_id IS NOT NULL AND venue_id IS NULL) OR (vendor_listing_id IS NULL AND venue_id IS NOT NULL)"
+        "bookings_one_target_check": {
+          "name": "bookings_one_target_check",
+          "value": "(\"bookings\".\"vendor_listing_id\" IS NOT NULL AND \"bookings\".\"venue_id\" IS NULL) OR (\"bookings\".\"vendor_listing_id\" IS NULL AND \"bookings\".\"venue_id\" IS NOT NULL)"
         },
-        "bookings_target_matches_type": {
-          "name": "bookings_target_matches_type",
-          "value": "(target_type = vendor AND vendor_listing_id IS NOT NULL AND venue_id IS NULL)\n        OR (target_type = venue AND venue_id IS NOT NULL AND vendor_listing_id IS NULL)"
+        "bookings_amounts_check": {
+          "name": "bookings_amounts_check",
+          "value": "\"bookings\".\"agreed_price\" > 0 AND \"bookings\".\"commission_amount\" >= 0 AND \"bookings\".\"payout_amount\" >= 0"
+        },
+        "bookings_split_check": {
+          "name": "bookings_split_check",
+          "value": "\"bookings\".\"commission_amount\" + \"bookings\".\"payout_amount\" = \"bookings\".\"agreed_price\""
+        },
+        "bookings_rate_check": {
+          "name": "bookings_rate_check",
+          "value": "\"bookings\".\"commission_rate\" >= 0 AND \"bookings\".\"commission_rate\" <= 1"
+        },
+        "bookings_paid_out_check": {
+          "name": "bookings_paid_out_check",
+          "value": "\"bookings\".\"paid_out_at\" IS NULL OR \"bookings\".\"payout_reference\" IS NOT NULL"
         }
       },
       "isRLSEnabled": false
@@ -1926,48 +2242,23 @@
           "primaryKey": false,
           "notNull": true
         },
-        "payer_id": {
-          "name": "payer_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
         "reference": {
           "name": "reference",
           "type": "varchar(100)",
           "primaryKey": false,
           "notNull": true
         },
-        "subaccount_code": {
-          "name": "subaccount_code",
-          "type": "varchar(100)",
-          "primaryKey": false,
-          "notNull": false
-        },
         "amount": {
           "name": "amount",
-          "type": "integer",
+          "type": "bigint",
           "primaryKey": false,
           "notNull": true
         },
         "platform_fee": {
           "name": "platform_fee",
-          "type": "integer",
+          "type": "bigint",
           "primaryKey": false,
-          "notNull": false
-        },
-        "payout_amount": {
-          "name": "payout_amount",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "currency": {
-          "name": "currency",
-          "type": "varchar(10)",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'NGN'"
+          "notNull": true
         },
         "status": {
           "name": "status",
@@ -1976,6 +2267,12 @@
           "primaryKey": false,
           "notNull": true,
           "default": "'pending'"
+        },
+        "paid_at": {
+          "name": "paid_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
         },
         "raw_webhook_payload": {
           "name": "raw_webhook_payload",
@@ -1990,29 +2287,15 @@
           "notNull": true,
           "default": "now()"
         },
-        "verified_at": {
-          "name": "verified_at",
+        "updated_at": {
+          "name": "updated_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true,
+          "default": "now()"
         }
       },
       "indexes": {
-        "payments_reference_idx": {
-          "name": "payments_reference_idx",
-          "columns": [
-            {
-              "expression": "reference",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
         "payments_booking_idx": {
           "name": "payments_booking_idx",
           "columns": [
@@ -2024,6 +2307,22 @@
             }
           ],
           "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "payments_one_success_per_booking_uq": {
+          "name": "payments_one_success_per_booking_uq",
+          "columns": [
+            {
+              "expression": "booking_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"payments\".\"status\" = 'success'",
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -2040,27 +2339,27 @@
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "payments_payer_id_users_id_fk": {
-          "name": "payments_payer_id_users_id_fk",
-          "tableFrom": "payments",
-          "tableTo": "users",
-          "columnsFrom": [
-            "payer_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
           "onDelete": "no action",
           "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
+      "uniqueConstraints": {
+        "payments_reference_unique": {
+          "name": "payments_reference_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "reference"
+          ]
+        }
+      },
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "payments_amount_check": {
+          "name": "payments_amount_check",
+          "value": "\"payments\".\"amount\" > 0 AND \"payments\".\"platform_fee\" >= 0"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.reviews": {
@@ -2086,24 +2385,25 @@
           "primaryKey": false,
           "notNull": true
         },
-        "target_type": {
-          "name": "target_type",
-          "type": "target_type",
+        "reviewee_id": {
+          "name": "reviewee_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "direction": {
+          "name": "direction",
+          "type": "review_direction",
           "typeSchema": "public",
           "primaryKey": false,
           "notNull": true
         },
-        "vendor_listing_id": {
-          "name": "vendor_listing_id",
-          "type": "uuid",
+        "provider_type": {
+          "name": "provider_type",
+          "type": "provider_type",
+          "typeSchema": "public",
           "primaryKey": false,
-          "notNull": false
-        },
-        "venue_id": {
-          "name": "venue_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "rating": {
           "name": "rating",
@@ -2126,8 +2426,8 @@
         }
       },
       "indexes": {
-        "reviews_booking_reviewer_unique": {
-          "name": "reviews_booking_reviewer_unique",
+        "reviews_booking_reviewer_uq": {
+          "name": "reviews_booking_reviewer_uq",
           "columns": [
             {
               "expression": "booking_id",
@@ -2147,26 +2447,11 @@
           "method": "btree",
           "with": {}
         },
-        "reviews_vendor_listing_idx": {
-          "name": "reviews_vendor_listing_idx",
+        "reviews_reviewee_idx": {
+          "name": "reviews_reviewee_idx",
           "columns": [
             {
-              "expression": "vendor_listing_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "reviews_venue_idx": {
-          "name": "reviews_venue_idx",
-          "columns": [
-            {
-              "expression": "venue_id",
+              "expression": "reviewee_id",
               "isExpression": false,
               "asc": true,
               "nulls": "last"
@@ -2189,7 +2474,7 @@
           "columnsTo": [
             "id"
           ],
-          "onDelete": "cascade",
+          "onDelete": "no action",
           "onUpdate": "no action"
         },
         "reviews_reviewer_id_users_id_fk": {
@@ -2205,25 +2490,12 @@
           "onDelete": "no action",
           "onUpdate": "no action"
         },
-        "reviews_vendor_listing_id_vendor_listings_id_fk": {
-          "name": "reviews_vendor_listing_id_vendor_listings_id_fk",
+        "reviews_reviewee_id_users_id_fk": {
+          "name": "reviews_reviewee_id_users_id_fk",
           "tableFrom": "reviews",
-          "tableTo": "vendor_listings",
+          "tableTo": "users",
           "columnsFrom": [
-            "vendor_listing_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "reviews_venue_id_venues_id_fk": {
-          "name": "reviews_venue_id_venues_id_fk",
-          "tableFrom": "reviews",
-          "tableTo": "venues",
-          "columnsFrom": [
-            "venue_id"
+            "reviewee_id"
           ],
           "columnsTo": [
             "id"
@@ -2236,17 +2508,13 @@
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {
-        "reviews_rating_range": {
-          "name": "reviews_rating_range",
-          "value": "rating BETWEEN 1 AND 5"
+        "reviews_rating_check": {
+          "name": "reviews_rating_check",
+          "value": "\"reviews\".\"rating\" BETWEEN 1 AND 5"
         },
-        "reviews_exactly_one_target": {
-          "name": "reviews_exactly_one_target",
-          "value": "(vendor_listing_id IS NOT NULL AND venue_id IS NULL) OR (vendor_listing_id IS NULL AND venue_id IS NOT NULL)"
-        },
-        "reviews_target_matches_type": {
-          "name": "reviews_target_matches_type",
-          "value": "(target_type = vendor AND vendor_listing_id IS NOT NULL AND venue_id IS NULL)\n        OR (target_type = venue AND venue_id IS NOT NULL AND vendor_listing_id IS NULL)"
+        "reviews_not_self_check": {
+          "name": "reviews_not_self_check",
+          "value": "\"reviews\".\"reviewer_id\" <> \"reviews\".\"reviewee_id\""
         }
       },
       "isRLSEnabled": false
@@ -2270,7 +2538,7 @@
         },
         "action": {
           "name": "action",
-          "type": "varchar(100)",
+          "type": "varchar(200)",
           "primaryKey": false,
           "notNull": true
         },
@@ -2289,7 +2557,7 @@
         },
         "notes": {
           "name": "notes",
-          "type": "varchar(1000)",
+          "type": "varchar(2000)",
           "primaryKey": false,
           "notNull": false
         },
@@ -2301,7 +2569,44 @@
           "default": "now()"
         }
       },
-      "indexes": {},
+      "indexes": {
+        "admin_logs_target_idx": {
+          "name": "admin_logs_target_idx",
+          "columns": [
+            {
+              "expression": "target_type",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "target_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "admin_logs_admin_idx": {
+          "name": "admin_logs_admin_idx",
+          "columns": [
+            {
+              "expression": "admin_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {
         "admin_logs_admin_id_users_id_fk": {
           "name": "admin_logs_admin_id_users_id_fk",
@@ -2325,12 +2630,32 @@
     }
   },
   "enums": {
+    "public.price_unit": {
+      "name": "price_unit",
+      "schema": "public",
+      "values": [
+        "fixed",
+        "per_day",
+        "per_hour",
+        "per_guest"
+      ]
+    },
     "public.target_type": {
       "name": "target_type",
       "schema": "public",
       "values": [
-        "vendor",
+        "vendor_listing",
         "venue"
+      ]
+    },
+    "public.user_role": {
+      "name": "user_role",
+      "schema": "public",
+      "values": [
+        "admin",
+        "moderator",
+        "support",
+        "user"
       ]
     },
     "public.user_status": {
@@ -2359,16 +2684,6 @@
         "pending",
         "approved",
         "rejected"
-      ]
-    },
-    "public.price_unit": {
-      "name": "price_unit",
-      "schema": "public",
-      "values": [
-        "fixed",
-        "per_day",
-        "per_hour",
-        "per_guest"
       ]
     },
     "public.inquiry_status": {
@@ -2411,6 +2726,22 @@
         "failed"
       ]
     },
+    "public.provider_type": {
+      "name": "provider_type",
+      "schema": "public",
+      "values": [
+        "vendor",
+        "venue_provider"
+      ]
+    },
+    "public.review_direction": {
+      "name": "review_direction",
+      "schema": "public",
+      "values": [
+        "organizer_to_provider",
+        "provider_to_organizer"
+      ]
+    },
     "public.admin_log_target_type": {
       "name": "admin_log_target_type",
       "schema": "public",
@@ -2419,7 +2750,8 @@
         "venue_provider_profile",
         "venue",
         "vendor_listing",
-        "user"
+        "user",
+        "booking"
       ]
     }
   },

@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { rateLimiter } from "../../lib/rate-limit";
+import { rateLimiter } from "../../utils/rate-limit";
 import { HOUR, MINUTE } from "../../constants";
 import {
   forgotPassword,
@@ -9,6 +9,7 @@ import {
   resendEmailVerification,
   resetPassword,
   signin,
+  signinWithGoogle,
   signup,
   verifyEmail,
 } from "./auth.controllers";
@@ -85,6 +86,8 @@ routes.post(
 routes.post("/refresh", rateLimiter(MINUTE * 15, 30), refresh);
 
 routes.post("/logout", logout);
+
+routes.get("/google/callback", signinWithGoogle);
 
 routes.get("/user", requireAuth, getAuthUser);
 

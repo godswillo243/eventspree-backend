@@ -1,5 +1,5 @@
 import { ipKeyGenerator, rateLimit, type Options } from "express-rate-limit";
-import { getErrorResponse } from "./utils";
+import { sendError } from "./api-response";
 
 export function rateLimiter(
   windowMs: number,
@@ -13,14 +13,12 @@ export function rateLimiter(
     legacyHeaders: false,
 
     handler: (_req, res, _next, optionsUsed) => {
-      res
-        .status(429)
-        .json(
-          getErrorResponse(
-            `Too many requests. Try again in ${Math.ceil(optionsUsed.windowMs / 1000)}s.`,
-            "RATE_LIMIT_EXCEEDED",
-          ),
-        );
+      sendError(
+        res,
+        `Too many requests. Try again in ${Math.ceil(optionsUsed.windowMs / 1000)}s.`,
+        429,
+        "RATE_LIMIT_EXCEEDED",
+      );
     },
 
     keyGenerator: (req) => ipKeyGenerator(req.ip!),

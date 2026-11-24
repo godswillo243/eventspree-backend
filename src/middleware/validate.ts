@@ -1,6 +1,6 @@
 import type { Handler } from "express";
 import type { ZodType } from "zod";
-import { getErrorResponse } from "../lib/utils";
+import { sendError } from "../utils/api-response";
 
 export function validate(
   schema: ZodType,
@@ -20,17 +20,13 @@ export function validate(
           message: issue.message,
         });
       }
-
-      res
-        .status(400)
-        .json(
-          getErrorResponse(
-            "Validation failed: " +
-              result.error.issues.map((iss) => iss.message).join(". "),
-            "VALIDATION_ERROR",
-            errors,
-          ),
-        );
+      sendError(
+        res,
+        `Validation failed:\n${result.error.issues.map((iss) => iss.message).join(". ")}`,
+        400,
+        "VALIDATION_ERROR",
+        errors,
+      );
       return;
     }
 

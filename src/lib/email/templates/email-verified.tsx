@@ -1,6 +1,6 @@
 // packages/transactional/emails/email-verified.tsx
 
-import { Heading, Text, Section } from "@react-email/components";
+import { Heading, Text, Section } from "react-email";
 import { EmailLayout } from "./layout";
 import { EmailButton } from "./components/email-button";
 

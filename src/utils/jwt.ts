@@ -11,6 +11,7 @@ type JWTPayload = {
 interface RefreshJWTPayload {
   userId: string;
   sessionId: string;
+  familyId: string;
 }
 
 export function signAccessJWT(payload: JWTPayload) {

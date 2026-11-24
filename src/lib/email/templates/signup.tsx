@@ -1,6 +1,6 @@
 // packages/transactional/emails/sign-up-otp.tsx
 
-import { Heading, Text } from "@react-email/components";
+import { Heading, Text } from "react-email";
 import { EmailLayout } from "./layout";
 import { OtpCode } from "./components/otp-code";
 

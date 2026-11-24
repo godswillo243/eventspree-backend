@@ -1,6 +1,6 @@
 // packages/transactional/emails/forgot-password.tsx
 
-import { Heading, Text, Section } from "@react-email/components";
+import { Heading, Text, Section } from "react-email";
 import { EmailLayout } from "./layout";
 import { OtpCode } from "./components/otp-code";
 

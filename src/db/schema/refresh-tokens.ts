@@ -1,8 +1,6 @@
-import { index, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { index, pgTable, timestamp, uuid, varchar } from "drizzle-orm/pg-core";
 import { users } from "./users";
 
-// Stores a hash of each issued refresh token (never the raw token).
-// Enables immediate revocation on logout, unlike pure stateless JWT refresh.
 export const refreshTokens = pgTable(
   "refresh_tokens",
   {
@@ -10,10 +8,17 @@ export const refreshTokens = pgTable(
     userId: uuid("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
-    tokenHash: text("token_hash").notNull(),
+    tokenHash: varchar("token_hash", { length: 255 }).notNull().unique(),
+    familyId: uuid("family_id").notNull(), // rotation chain; reuse of a revoked token revokes the family
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
     revokedAt: timestamp("revoked_at", { withTimezone: true }),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    replacedByTokenId: uuid("replaced_by_token_id"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
-  (t) => [index("refresh_tokens_user_idx").on(t.userId)]
+  (t) => [
+    index("refresh_tokens_user_idx").on(t.userId),
+    index("refresh_tokens_family_idx").on(t.familyId),
+  ],
 );

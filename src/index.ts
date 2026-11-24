@@ -1,14 +1,17 @@
 import app from "./app";
 import { env } from "./config/env";
-import { db } from "./db/client";
-import { sql } from "drizzle-orm";
+import { queryClient } from "./db/client";
 import { dbCheck } from "./db/utils";
+import { logger } from "./config/logger";
 
-const start = () => {
-  dbCheck();
-  app.listen(env.PORT, () => {
-    console.log("SERVER LISTENING ON PORT: " + env.PORT);
-  });
-};
+const { status } = await dbCheck();
+if (status === "success") logger.info("Database connected");
+const server = app.listen(env.PORT, () => {
+  logger.info("SERVER LISTENING ON PORT: " + env.PORT);
+});
 
-start();
+const shutdown = () =>
+  server.close(() => queryClient.end().then(() => process.exit(0)));
+
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);

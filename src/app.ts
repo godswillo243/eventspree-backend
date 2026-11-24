@@ -8,8 +8,8 @@ import { dbCheck } from "./db/utils";
 import { errorHandler } from "./middleware/error";
 import authRoutes from "./mods/auth/auth.routes";
 import { requestLogger } from "./middleware/request-logger";
-import { getErrorResponse } from "./lib/utils";
 import { sendTestEmail } from "./lib/email";
+import { sendError } from "./utils/api-response";
 
 const app: Express = express();
 
@@ -71,7 +71,7 @@ app.use("/auth", authRoutes);
 
 app.use(errorHandler);
 app.use((req, res) => {
-  res.status(404).json(getErrorResponse("Route not found.", "NOT_FOUND"));
+  sendError(res, "Route not found", 404, "NOT_FOUND");
 });
 
 export default app;

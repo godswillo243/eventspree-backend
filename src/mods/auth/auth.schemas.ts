@@ -28,6 +28,10 @@ export const signupSchema = z.strictObject({
   }),
 
   password: passwordSchema,
+  name: z.string({
+    error: (issue) =>
+      issue.input === undefined ? "Name is required" : "Name must be a string",
+  }),
 });
 
 export const signinSchema = z.strictObject({

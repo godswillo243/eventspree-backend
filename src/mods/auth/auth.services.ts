@@ -1,4 +1,5 @@
 import { and, desc, eq } from "drizzle-orm";
+import { generate } from "otp-generator";
 import { db } from "../../db/client";
 import { otpRecords, refreshTokens, users } from "../../db/schema";
 import type {
@@ -9,14 +10,16 @@ import type {
   SignupInput,
   VerifyEmailInput,
 } from "./auth.schemas";
-import { AppError } from "../../lib/api-error";
-import { generateHash } from "../../lib/password";
-import { generate } from "otp-generator";
-import { DAY, HOUR, MINUTE, MS_MAP, SECOND } from "../../constants";
-import { upsertOTP, validateOtpRecord } from "./auth.utils";
-import { verifyHash } from "../../lib/password";
+import { generateHash } from "../../utils/password";
+import { HOUR } from "../../constants";
+import { parseDuration, upsertOTP, validateOtpRecord } from "./auth.utils";
+import { verifyHash } from "../../utils/password";
 import { logger } from "../../config/logger";
-import { signAccessJWT, signRefreshJWT, verifyRefreshJWT } from "../../lib/jwt";
+import {
+  signAccessJWT,
+  signRefreshJWT,
+  verifyRefreshJWT,
+} from "../../utils/jwt";
 import crypto from "crypto";
 import { env } from "../../config/env";
 import {
@@ -26,49 +29,41 @@ import {
   sendForgotPassword,
   sendPasswordResetSuccess,
 } from "../../lib/email";
+import { ApiError } from "../../utils/api-error";
+import { isUniqueViolation } from "../../utils/unique-violation";
 
-type ServiceReturnType<TData = unknown, TMeta = unknown> = Promise<
-  | {
-      ok: true;
-      statusCode: number;
-      message: string;
-      data: TData;
-      meta?: Record<string, TMeta>;
-    }
-  | {
-      ok: false;
-      statusCode: number;
-      message: string;
-      error?: unknown;
-    }
->;
+type ServiceReturnType<TData = unknown, TMeta = unknown> = Promise<{
+  statusCode: number;
+  message: string;
+  data: TData;
+  meta?: Record<string, TMeta>;
+}>;
 
-export async function signupService(input: SignupInput): ServiceReturnType {
-  const existingUsers = await db
-    .select({ email: users.email })
-    .from(users)
-    .where(eq(users.email, input.email));
-
-  if (existingUsers.length > 0) {
-    return {
-      ok: false,
-      statusCode: 400,
-      message: "Email already used",
-      error: true,
-    };
-  }
-
+export async function signup(input: SignupInput): ServiceReturnType {
   const passwordHash = await generateHash(input.password);
+  let newUser:
+    | {
+        email: string;
+        id: string;
+        name: string | null;
+      }
+    | undefined;
 
-  const newUser = (
-    await db
-      .insert(users)
-      .values({ email: input.email, passwordHash })
-      .returning({ email: users.email, id: users.id })
-  )[0];
-
-  if (!newUser) {
-    throw new AppError("Error creating user", 500);
+  try {
+    newUser = (
+      await db
+        .insert(users)
+        .values({ email: input.email, passwordHash })
+        .returning({ email: users.email, id: users.id, name: users.name })
+    )[0];
+    if (!newUser) {
+      throw new Error("Error creating user");
+    }
+  } catch (error) {
+    if (isUniqueViolation(error)) {
+      throw new ApiError(400, "Email already used.");
+    }
+    throw new ApiError(500, "Error creating user");
   }
 
   const otp = generate(6, {
@@ -88,23 +83,19 @@ export async function signupService(input: SignupInput): ServiceReturnType {
     maxAttempts: 5,
   });
 
-  // TODO: Send otp to email
   if (env.NODE_ENV !== "production") {
     logger.info(`OTP for ${input.email}: ${otp}`);
   }
   await sendSignUpOtp(newUser.email, newUser.email, otp);
 
   return {
-    ok: true,
     statusCode: 201,
     message: "User created.",
     data: { user: newUser },
   };
 }
 
-export async function verifyEmailService(
-  input: VerifyEmailInput,
-): ServiceReturnType {
+export async function verifyEmail(input: VerifyEmailInput): ServiceReturnType {
   const user = (
     await db
       .select({
@@ -117,53 +108,37 @@ export async function verifyEmailService(
   )[0];
 
   if (!user) {
-    return {
-      ok: false,
-      message: "User with email does not exist. Sign up to continue.",
-      statusCode: 404,
-    };
+    throw new ApiError(
+      404,
+      "User with email does not exist. Sign up to continue",
+    );
   }
   if (user.emailVerifiedAt) {
-    return {
-      ok: false,
-      message: "Email already verified. Sign in to continue",
-      statusCode: 400,
-    };
+    throw new ApiError(400, "Email already verified. Sign in to continue");
   }
 
-  const record = (
-    await db
-      .select()
-      .from(otpRecords)
-      .where(
-        and(
-          eq(otpRecords.type, "email_verification"),
-          eq(otpRecords.userId, user.id),
-        ),
-      )
-      .orderBy(desc(otpRecords.createdAt))
-      .limit(1)
-  )[0];
-
-  if (!record) {
-    return {
-      ok: false,
-      message: "Invalid OTP. Request for another",
-      statusCode: 400,
-    };
-  }
+  const record =
+    (
+      await db
+        .select()
+        .from(otpRecords)
+        .where(
+          and(
+            eq(otpRecords.type, "email_verification"),
+            eq(otpRecords.userId, user.id),
+          ),
+        )
+        .orderBy(desc(otpRecords.createdAt))
+        .limit(1)
+    )[0] || null;
 
   const { ok, message, statusCode } = await validateOtpRecord(
     record,
     input.otp,
   );
 
-  if (!ok) {
-    return {
-      ok,
-      message: message || "Invalid otp.",
-      statusCode: statusCode || 401,
-    };
+  if (!ok || !record) {
+    throw new ApiError(statusCode || 401, message || "Invalid or expired OTP.");
   }
 
   const updatedUser = (
@@ -176,7 +151,7 @@ export async function verifyEmailService(
       .where(eq(users.email, input.email))
   )[0];
 
-  if (!updatedUser) throw new Error("Something went wrong");
+  if (!updatedUser) throw new ApiError(500, "Something went wrong");
 
   await sendEmailVerified(
     user.email,
@@ -190,7 +165,6 @@ export async function verifyEmailService(
     .where(eq(otpRecords.id, record.id));
 
   return {
-    ok: true,
     message: "Email verified.",
     statusCode: 200,
     data: updatedUser,
@@ -210,17 +184,19 @@ export async function resendEmailVerificationOTP(
       .from(users)
       .where(eq(users.email, input.email))
   )[0];
+  const responseMessage =
+    "If an account exists with this email, you'll receive an otp.  Please check your inbox (and spam folder).";
 
   if (!user) {
-    return { ok: false, message: "User not found", statusCode: 404 };
+    return {
+      data: null,
+      message: responseMessage,
+      statusCode: 200,
+    };
   }
 
   if (user.emailVerifiedAt) {
-    return {
-      ok: false,
-      message: "Email already verified. Sign in to continue",
-      statusCode: 400,
-    };
+    throw new ApiError(400, "Email already verified. Sign in to continue");
   }
 
   const otp = generate(6, {
@@ -232,54 +208,46 @@ export async function resendEmailVerificationOTP(
 
   const otpHash = await generateHash(otp);
 
-  const otpRecord = await upsertOTP({
+  await upsertOTP({
     expiresAt: new Date(Date.now() + HOUR),
     codeHash: otpHash,
     type: "email_verification",
     userId: user.id,
     maxAttempts: 5,
   });
-
-  // TODO: Send otp to email
-  logger.info("OTP for " + input.email + ": " + otp);
+  if (env.NODE_ENV !== "production") {
+    logger.info("OTP for " + input.email + ": " + otp);
+  }
   await sendResendVerificationOTP(user.email, user.email, otp);
 
-  return { ok: true, message: "Email sent.", data: user, statusCode: 200 };
+  return { message: responseMessage, data: user, statusCode: 200 };
 }
 
-export async function signinService(input: SigninInput): ServiceReturnType {
+export async function signin(input: SigninInput): ServiceReturnType {
   const user = (
-    await db.select().from(users).where(eq(users.email, input.email))
+    await db
+      .select({
+        id: users.id,
+        email: users.email,
+        passwordHash: users.passwordHash,
+        emailVerifiedAt: users.emailVerifiedAt,
+        role: users.role,
+      })
+      .from(users)
+      .where(eq(users.email, input.email))
   )[0];
   if (!user) {
-    return {
-      ok: false,
-      message: "Invalid email or password.",
-      statusCode: 400,
-    };
+    throw new ApiError(400, "Invalid email or password.");
   }
 
   if (!user.emailVerifiedAt)
-    return {
-      ok: false,
-      message: "Email not verified. Please verify your email.",
-      statusCode: 400,
-    };
+    throw new ApiError(400, "Email not verified. Please verify your email.");
 
   if (!user.passwordHash)
-    return {
-      ok: false,
-      message: "Password not set for this user.",
-      statusCode: 400,
-    };
+    throw new ApiError(400, "Password not set for this account.");
 
   const isMatch = await verifyHash(user.passwordHash, input.password);
-  if (!isMatch)
-    return {
-      ok: false,
-      message: "Invalid email or password.",
-      statusCode: 400,
-    };
+  if (!isMatch) throw new ApiError(400, "Invalid email or password.");
 
   const accessToken = signAccessJWT({
     role: user.role,
@@ -287,31 +255,26 @@ export async function signinService(input: SigninInput): ServiceReturnType {
   });
 
   const sessionId = crypto.randomUUID().toString();
-
+  const familyId = crypto.randomUUID().toString();
   const refreshToken = signRefreshJWT({
     sessionId,
     userId: user.id,
+    familyId,
   });
-
+  const expiresAt = new Date(
+    Date.now() + parseDuration(env.JWT_REFRESH_EXPIRES),
+  );
   const refreshTokenHash = await generateHash(refreshToken);
 
   await db.insert(refreshTokens).values({
-    expiresAt: new Date(
-      Date.now() +
-        parseInt(env.JWT_REFRESH_EXPIRES) *
-          MS_MAP[
-            env.JWT_REFRESH_EXPIRES[
-              env.JWT_REFRESH_EXPIRES.length - 1
-            ] as keyof typeof MS_MAP
-          ],
-    ),
+    expiresAt,
     tokenHash: refreshTokenHash,
     userId: user.id,
     id: sessionId,
+    familyId,
   });
 
   return {
-    ok: true,
     data: { accessToken, user: { id: user.id, email: user.email } },
     message: "",
     statusCode: 200,
@@ -321,7 +284,126 @@ export async function signinService(input: SigninInput): ServiceReturnType {
   };
 }
 
-export async function forgotPasswordService(
+export async function signinWithGoogle(input: { code?: string }) {
+  if (!input.code)
+    throw new ApiError(
+      400,
+      "Missing code",
+      undefined,
+      undefined,
+      `${env.CLIENT_URL}/google/callback`,
+    );
+
+  const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      code: input.code,
+      client_id: env.GOOGLE_CLIENT_ID,
+      client_secret: env.GOOGLE_CLIENT_SECRET,
+      redirect_uri: env.GOOGLE_REDIRECT_URI,
+      grant_type: "authorization_code",
+    }),
+  });
+
+  if (!tokenRes.ok) {
+    logger.error(await tokenRes.text());
+    throw new ApiError(
+      500,
+      "Token exchange failed",
+      undefined,
+      undefined,
+      `${env.CLIENT_URL}/google/callback`,
+    );
+  }
+
+  const { access_token, id_token } = (await tokenRes.json()) as Record<
+    string,
+    string
+  >;
+
+  const userRes = await fetch(
+    "https://openidconnect.googleapis.com/v1/userinfo",
+    {
+      headers: { Authorization: `Bearer ${access_token}` },
+    },
+  );
+
+  if (!userRes.ok) {
+    logger.error(await userRes.text());
+    throw new ApiError(
+      500,
+      "Failed to fetch google user",
+      undefined,
+      undefined,
+      `${env.CLIENT_URL}/google/callback`,
+    );
+  }
+
+  const user = (await userRes.json()) as {
+    sub: string;
+    name: string;
+    email: string;
+  }; // { sub, name, email, picture, ... }
+
+  console.log(user);
+
+  let dbUser = (
+    await db
+      .select()
+      .from(users)
+      .where(and(eq(users.email, user.email), eq(users.googleAuthId, user.sub)))
+      .limit(1)
+  )[0];
+
+  if (!dbUser) {
+    dbUser = (
+      await db
+        .insert(users)
+        .values({ email: user.email, name: user.name, googleAuthId: user.sub })
+    )[0];
+  }
+
+  if (!dbUser) {
+    throw new ApiError(500, "Error creating user");
+  }
+
+  const accessToken = signAccessJWT({
+    role: dbUser.role,
+    userId: dbUser.id,
+  });
+
+  const sessionId = crypto.randomUUID().toString();
+  const familyId = crypto.randomUUID().toString();
+  const refreshToken = signRefreshJWT({
+    sessionId,
+    userId: dbUser.id,
+    familyId,
+  });
+  const expiresAt = new Date(
+    Date.now() + parseDuration(env.JWT_REFRESH_EXPIRES),
+  );
+  const refreshTokenHash = await generateHash(refreshToken);
+
+  await db.insert(refreshTokens).values({
+    expiresAt,
+    tokenHash: refreshTokenHash,
+    userId: dbUser.id,
+    id: sessionId,
+    familyId,
+  });
+
+  return {
+    data: { accessToken, user: { id: dbUser.id, email: user.email } },
+    message: "",
+    statusCode: 200,
+    meta: {
+      refreshToken,
+    },
+  };
+}
+
+export async function forgotPassword(
   input: ForgotPasswordInput,
 ): ServiceReturnType {
   const user = (
@@ -339,7 +421,7 @@ export async function forgotPasswordService(
     "If an account exists with this email, you'll receive an otp.  Please check your inbox (and spam folder).";
 
   if (!user) {
-    return { ok: true, message: responseMessage, data: {}, statusCode: 200 };
+    return { message: responseMessage, data: {}, statusCode: 200 };
   }
 
   const otp = generate(6, {
@@ -363,10 +445,10 @@ export async function forgotPasswordService(
   logger.info("OTP for " + input.email + ": " + otp);
   await sendForgotPassword(user.email, user.email, otp);
 
-  return { ok: true, message: responseMessage, data: {}, statusCode: 200 };
+  return { message: responseMessage, data: {}, statusCode: 200 };
 }
 
-export async function resetPasswordService(
+export async function resetPassword(
   input: ResetPasswordInput,
 ): ServiceReturnType {
   const user = (
@@ -380,12 +462,10 @@ export async function resetPasswordService(
       .where(eq(users.email, input.email))
   )[0];
 
+  const responseMessage = "Password reset.";
+
   if (!user) {
-    return {
-      ok: false,
-      message: "User with email does not exist. Sign up to continue.",
-      statusCode: 404,
-    };
+    return { message: responseMessage, data: {}, statusCode: 200 };
   }
 
   const record =
@@ -409,11 +489,7 @@ export async function resetPasswordService(
   );
 
   if (!ok || !record) {
-    return {
-      ok,
-      message: message || "Invalid otp.",
-      statusCode: statusCode || 401,
-    } as unknown as ServiceReturnType;
+    throw new ApiError(statusCode || 400, message || "Invalid or expired OTP.");
   }
 
   const passwordHash = await generateHash(input.newPassword);
@@ -429,7 +505,10 @@ export async function resetPasswordService(
   )[0];
 
   if (!updatedUser)
-    throw new Error("Something went wrong. Error updating user password.");
+    throw new ApiError(
+      500,
+      "Something went wrong. Error updating user password.",
+    );
 
   await db
     .update(otpRecords)
@@ -448,17 +527,16 @@ export async function resetPasswordService(
     .where(eq(refreshTokens.userId, user.id));
 
   return {
-    ok: true,
-    message: "Password reset.",
+    message: responseMessage,
     statusCode: 200,
-    data: null,
+    data: { email: user.email },
   };
 }
 
-export async function refreshService(token: string): ServiceReturnType {
+export async function refresh(token: string): ServiceReturnType {
   const payload = verifyRefreshJWT(token);
   if (!payload) {
-    return { ok: false, message: "Invalid refresh token.", statusCode: 401 };
+    throw new ApiError(401, "Invalid refresh token.");
   }
 
   const session = (
@@ -469,23 +547,22 @@ export async function refreshService(token: string): ServiceReturnType {
   )[0];
 
   if (!session || session.revokedAt) {
-    return { ok: false, message: "Invalid refresh token.", statusCode: 401 };
+    throw new ApiError(401, "Invalid refresh token.");
   }
 
   if (session.expiresAt < new Date())
-    return {
-      ok: false,
-      message: "Session has expired. Sign in to create a new one.",
-      statusCode: 401,
-    };
+    throw new ApiError(
+      401,
+      "Session has expired. Sign in to create a new one.",
+    );
 
   const isValid = await verifyHash(session.tokenHash, token);
   if (!isValid) {
     await db
       .update(refreshTokens)
       .set({ revokedAt: new Date() })
-      .where(eq(refreshTokens.id, session.id));
-    return { ok: false, message: "Invalid refresh token.", statusCode: 401 };
+      .where(eq(refreshTokens.familyId, session.familyId));
+    throw new ApiError(401, "Invalid refresh token.");
   }
 
   const user = (
@@ -494,12 +571,7 @@ export async function refreshService(token: string): ServiceReturnType {
       .from(users)
       .where(eq(users.id, session.userId))
   )[0];
-  if (!user)
-    return {
-      ok: false,
-      message: "User not found",
-      statusCode: 404,
-    };
+  if (!user) throw new ApiError(404, "User not found.");
 
   const accessToken = signAccessJWT({
     role: user.role,
@@ -511,59 +583,54 @@ export async function refreshService(token: string): ServiceReturnType {
   const refreshToken = signRefreshJWT({
     sessionId,
     userId: user.id,
+    familyId: session.familyId,
   });
+  const expiresAt = new Date(
+    Date.now() + parseDuration(env.JWT_REFRESH_EXPIRES),
+  );
 
   const refreshTokenHash = await generateHash(refreshToken);
 
   await db
     .update(refreshTokens)
     .set({
-      expiresAt: new Date(
-        Date.now() +
-          parseInt(env.JWT_REFRESH_EXPIRES) *
-            MS_MAP[
-              env.JWT_REFRESH_EXPIRES[
-                env.JWT_REFRESH_EXPIRES.length - 1
-              ] as keyof typeof MS_MAP
-            ],
-      ),
+      expiresAt,
       tokenHash: refreshTokenHash,
     })
     .where(eq(refreshTokens.id, sessionId));
 
   return {
-    ok: true,
     data: { accessToken },
     message: "",
     statusCode: 200,
     meta: {
       refreshToken,
-    },
+    } as const,
   };
 }
 
-export async function logoutService(token: string): ServiceReturnType {
+export async function logout(token: string): ServiceReturnType {
   const payload = verifyRefreshJWT(token);
 
   if (!payload)
     return {
-      ok: true,
       data: null,
       message: "Log out successful.",
       statusCode: 200,
     };
 
-  await db.delete(refreshTokens).where(eq(refreshTokens.id, payload.sessionId));
+  await db
+    .delete(refreshTokens)
+    .where(eq(refreshTokens.familyId, payload.familyId));
 
   return {
-    ok: true,
     data: null,
     message: "Log out successful.",
     statusCode: 200,
   };
 }
 
-export async function getAuthUserService(userId: string): ServiceReturnType {
+export async function getAuthUser(userId: string): ServiceReturnType {
   const user = (
     await db
       .select({
@@ -577,15 +644,9 @@ export async function getAuthUserService(userId: string): ServiceReturnType {
       .where(eq(users.id, userId))
   )[0];
 
-  if (!user)
-    return {
-      statusCode: 404,
-      ok: false,
-      message: "User not found.",
-    };
+  if (!user) throw new ApiError(404, "User not found.");
 
   return {
-    ok: true,
     message: "",
     data: {
       user,

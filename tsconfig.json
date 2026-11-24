@@ -6,7 +6,7 @@
     "lib": ["ES2022"],
 
     "outDir": "./dist",
-    "rootDir": "./src",
+    "rootDir": "./",
     "sourceMap": true,
     "declaration": true,
 
@@ -26,6 +26,6 @@
 
     "types": ["node"]
   },
-  "include": ["src/**/*"],
+  "include": ["src/**/*", "./drizzle.config.ts"],
   "exclude": ["node_modules", "dist"]
 }

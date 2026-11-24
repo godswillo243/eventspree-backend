@@ -9,7 +9,7 @@ import {
   Font,
   Tailwind,
   Preview,
-} from "@react-email/components";
+} from "react-email";
 import { emailTailwindConfig } from "../config/tailwind-config";
 
 interface EmailLayoutProps {
