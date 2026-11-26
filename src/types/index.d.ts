@@ -10,4 +10,13 @@ export interface ApiResponse<T> {
   };
 }
 
+export type PublicUser = {
+  id: string;
+  name: string | null;
+  email: string;
+  avatarUrl: string | null;
+  role: "user" | "admin" | "moderator" | "support";
+  status: "active" | "suspended" | "inactive";
+};
+
 export {};

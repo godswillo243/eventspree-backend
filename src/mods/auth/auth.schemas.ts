@@ -50,6 +50,12 @@ export const signinSchema = z.strictObject({
   }),
 });
 
+export const googleSigninSchema = z.object({
+  code: z.string().min(1).max(2048),
+  codeVerifier: z.string().min(43).max(128), // RFC 7636 bounds
+});
+export type GoogleSigninInput = z.infer<typeof googleSigninSchema>;
+
 export const verifyEmailSchema = z.strictObject({
   email: z.email({
     error: (issue) =>

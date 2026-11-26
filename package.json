@@ -2,7 +2,7 @@
   "name": "eventspree-server",
   "type": "module",
   "scripts": {
-    "dev": "nodemon",
+    "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
     "db:generate": "drizzle-kit generate",
@@ -54,7 +54,7 @@
     "postgres": "^3.4.9",
     "react-email": "^6.11.4",
     "tsx": "^4.19.0",
-    "typescript": "^7.0.2",
+    "typescript": "^6.0.3",
     "typescript-eslint": "^8.72.0"
   }
 }

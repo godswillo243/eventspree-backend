@@ -12,6 +12,7 @@ interface RefreshJWTPayload {
   userId: string;
   sessionId: string;
   familyId: string;
+  jti: string;
 }
 
 export function signAccessJWT(payload: JWTPayload) {
@@ -21,14 +22,16 @@ export function signAccessJWT(payload: JWTPayload) {
 }
 
 export function signRefreshJWT(payload: RefreshJWTPayload) {
-  return jwt.sign(payload, env.JWT_REFRESH_SECRET as any, {
+  return jwt.sign(payload, env.JWT_REFRESH_SECRET, {
     expiresIn: env.JWT_REFRESH_EXPIRES as StringValue,
   });
 }
 
 export function verifyAccessJWT(token: string) {
   try {
-    const decoded = jwt.verify(token, env.JWT_ACCESS_SECRET) as JWTPayload;
+    const decoded = jwt.verify(token, env.JWT_ACCESS_SECRET, {
+      algorithms: ["HS256"],
+    }) as JWTPayload;
     return decoded;
   } catch {
     return null;

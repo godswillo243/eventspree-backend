@@ -1,9 +1,12 @@
-import { and, desc, eq } from "drizzle-orm";
-import { generate } from "otp-generator";
+import type { ServiceReturnType } from "../../types/service";
+import crypto from "crypto";
+import { and, desc, eq, isNull } from "drizzle-orm";
+
 import { db } from "../../db/client";
 import { otpRecords, refreshTokens, users } from "../../db/schema";
 import type {
   ForgotPasswordInput,
+  GoogleSigninInput,
   ResendEmailVerificationInput,
   ResetPasswordInput,
   SigninInput,
@@ -12,15 +15,24 @@ import type {
 } from "./auth.schemas";
 import { generateHash } from "../../utils/password";
 import { HOUR } from "../../constants";
-import { parseDuration, upsertOTP, validateOtpRecord } from "./auth.utils";
+import {
+  createSession,
+  generateOtp,
+  GRACE_MS,
+  parseDuration,
+  same,
+  sha256,
+  toPublicUser,
+  upsertOTP,
+  validateOtpRecord,
+} from "./auth.utils";
 import { verifyHash } from "../../utils/password";
-import { logger } from "../../config/logger";
 import {
   signAccessJWT,
   signRefreshJWT,
   verifyRefreshJWT,
 } from "../../utils/jwt";
-import crypto from "crypto";
+import { logger } from "../../config/logger";
 import { env } from "../../config/env";
 import {
   sendSignUpOtp,
@@ -31,49 +43,42 @@ import {
 } from "../../lib/email";
 import { ApiError } from "../../utils/api-error";
 import { isUniqueViolation } from "../../utils/unique-violation";
-
-type ServiceReturnType<TData = unknown, TMeta = unknown> = Promise<{
-  statusCode: number;
-  message: string;
-  data: TData;
-  meta?: Record<string, TMeta>;
-}>;
+import type { User } from "../../db/types";
+import type { PublicUser } from "../../types";
 
 export async function signup(input: SignupInput): ServiceReturnType {
   const passwordHash = await generateHash(input.password);
-  let newUser:
-    | {
-        email: string;
-        id: string;
-        name: string | null;
-      }
-    | undefined;
+  let newUser: User | undefined;
 
   try {
     newUser = (
       await db
         .insert(users)
-        .values({ email: input.email, passwordHash })
-        .returning({ email: users.email, id: users.id, name: users.name })
+        .values({ email: input.email, name: input.name, passwordHash })
+        .returning()
     )[0];
     if (!newUser) {
       throw new Error("Error creating user");
     }
   } catch (error) {
     if (isUniqueViolation(error)) {
-      throw new ApiError(400, "Email already used.");
-    }
-    throw new ApiError(500, "Error creating user");
+      if (newUser && !newUser.emailVerifiedAt) {
+        [newUser] = await db
+          .update(users)
+          .set({
+            passwordHash,
+            name: input.name,
+          })
+          .where(
+            and(eq(users.email, newUser.email), isNull(users.emailVerifiedAt)),
+          )
+          .returning();
+      } else throw new ApiError(400, "Email already used.");
+    } else throw error;
   }
+  if (!newUser) throw new ApiError(500, "Error creating user");
 
-  const otp = generate(6, {
-    digits: true,
-    lowerCaseAlphabets: false,
-    specialChars: false,
-    upperCaseAlphabets: false,
-  });
-
-  const otpHash = await generateHash(otp);
+  const [otp, otpHash] = generateOtp();
 
   await upsertOTP({
     expiresAt: new Date(Date.now() + HOUR),
@@ -86,7 +91,7 @@ export async function signup(input: SignupInput): ServiceReturnType {
   if (env.NODE_ENV !== "production") {
     logger.info(`OTP for ${input.email}: ${otp}`);
   }
-  await sendSignUpOtp(newUser.email, newUser.email, otp);
+  await sendSignUpOtp(newUser.email, newUser.name ?? newUser.email, otp);
 
   return {
     statusCode: 201,
@@ -96,16 +101,10 @@ export async function signup(input: SignupInput): ServiceReturnType {
 }
 
 export async function verifyEmail(input: VerifyEmailInput): ServiceReturnType {
-  const user = (
-    await db
-      .select({
-        id: users.id,
-        emailVerifiedAt: users.emailVerifiedAt,
-        email: users.email,
-      })
-      .from(users)
-      .where(eq(users.email, input.email))
-  )[0];
+  let [user] = await db
+    .select()
+    .from(users)
+    .where(eq(users.email, input.email));
 
   if (!user) {
     throw new ApiError(
@@ -117,57 +116,55 @@ export async function verifyEmail(input: VerifyEmailInput): ServiceReturnType {
     throw new ApiError(400, "Email already verified. Sign in to continue");
   }
 
-  const record =
-    (
-      await db
-        .select()
-        .from(otpRecords)
-        .where(
-          and(
-            eq(otpRecords.type, "email_verification"),
-            eq(otpRecords.userId, user.id),
-          ),
-        )
-        .orderBy(desc(otpRecords.createdAt))
-        .limit(1)
-    )[0] || null;
+  const [record] = await db
+    .select()
+    .from(otpRecords)
+    .where(
+      and(
+        eq(otpRecords.type, "email_verification"),
+        eq(otpRecords.userId, user.id),
+      ),
+    )
+    .orderBy(desc(otpRecords.createdAt))
+    .limit(1);
 
   const { ok, message, statusCode } = await validateOtpRecord(
     record,
     input.otp,
   );
 
-  if (!ok || !record) {
+  if (!ok || !record || !user) {
     throw new ApiError(statusCode || 401, message || "Invalid or expired OTP.");
   }
+  const userId = user.id;
 
-  const updatedUser = (
-    await db
+  await db.transaction(async (tx) => {
+    const [consumed] = await tx
+      .update(otpRecords)
+      .set({ consumedAt: new Date() })
+      .where(and(eq(otpRecords.id, record.id), isNull(otpRecords.consumedAt)))
+      .returning({ id: otpRecords.id });
+    if (!consumed) throw new ApiError(400, "Invalid or expired code.");
+
+    [user] = await tx
       .update(users)
-      .set({
-        emailVerifiedAt: new Date(Date.now()),
-      })
-      .returning({ email: users.email, id: users.id })
-      .where(eq(users.email, input.email))
-  )[0];
+      .set({ emailVerifiedAt: new Date(Date.now()) })
+      .where(eq(users.id, userId))
+      .returning();
+  });
 
-  if (!updatedUser) throw new ApiError(500, "Something went wrong");
-
+  const { accessToken, refreshToken } = await createSession(user);
   await sendEmailVerified(
     user.email,
-    user.email,
-    `${env.CLIENT_URL}/dashboard`,
+    user.name ?? user.email,
+    `${env.CLIENT_URL}/home`,
   );
 
-  await db
-    .update(otpRecords)
-    .set({ consumedAt: new Date() })
-    .where(eq(otpRecords.id, record.id));
-
   return {
-    message: "Email verified.",
     statusCode: 200,
-    data: updatedUser,
+    message: "Email verified.",
+    data: { accessToken, user: toPublicUser(user) },
+    meta: { refreshToken },
   };
 }
 
@@ -199,14 +196,7 @@ export async function resendEmailVerificationOTP(
     throw new ApiError(400, "Email already verified. Sign in to continue");
   }
 
-  const otp = generate(6, {
-    digits: true,
-    lowerCaseAlphabets: false,
-    specialChars: false,
-    upperCaseAlphabets: false,
-  });
-
-  const otpHash = await generateHash(otp);
+  const [otp, otpHash] = generateOtp();
 
   await upsertOTP({
     expiresAt: new Date(Date.now() + HOUR),
@@ -220,7 +210,7 @@ export async function resendEmailVerificationOTP(
   }
   await sendResendVerificationOTP(user.email, user.email, otp);
 
-  return { message: responseMessage, data: user, statusCode: 200 };
+  return { message: responseMessage, data: null, statusCode: 200 };
 }
 
 export async function signin(input: SigninInput): ServiceReturnType {
@@ -232,6 +222,7 @@ export async function signin(input: SigninInput): ServiceReturnType {
         passwordHash: users.passwordHash,
         emailVerifiedAt: users.emailVerifiedAt,
         role: users.role,
+        status: users.status,
       })
       .from(users)
       .where(eq(users.email, input.email))
@@ -240,39 +231,22 @@ export async function signin(input: SigninInput): ServiceReturnType {
     throw new ApiError(400, "Invalid email or password.");
   }
 
+  const DUMMY_HASH = await generateHash("not-a-real-password"); // module init
+  const ok = await verifyHash(user?.passwordHash ?? DUMMY_HASH, input.password);
+  if (!user || !user.passwordHash || !ok)
+    throw new ApiError(400, "Invalid email or password.");
   if (!user.emailVerifiedAt)
-    throw new ApiError(400, "Email not verified. Please verify your email.");
+    throw new ApiError(
+      403,
+      "Verify your email to continue." /* code: "EMAIL_NOT_VERIFIED" */,
+      "EMAIL_NOT_VERIFIED",
+    );
+  if (user.status !== "active")
+    throw new ApiError(403, "This account is unavailable.");
 
-  if (!user.passwordHash)
-    throw new ApiError(400, "Password not set for this account.");
+  if (!user.passwordHash) throw new ApiError(400, "Invalid email or password.");
 
-  const isMatch = await verifyHash(user.passwordHash, input.password);
-  if (!isMatch) throw new ApiError(400, "Invalid email or password.");
-
-  const accessToken = signAccessJWT({
-    role: user.role,
-    userId: user.id,
-  });
-
-  const sessionId = crypto.randomUUID().toString();
-  const familyId = crypto.randomUUID().toString();
-  const refreshToken = signRefreshJWT({
-    sessionId,
-    userId: user.id,
-    familyId,
-  });
-  const expiresAt = new Date(
-    Date.now() + parseDuration(env.JWT_REFRESH_EXPIRES),
-  );
-  const refreshTokenHash = await generateHash(refreshToken);
-
-  await db.insert(refreshTokens).values({
-    expiresAt,
-    tokenHash: refreshTokenHash,
-    userId: user.id,
-    id: sessionId,
-    familyId,
-  });
+  const { accessToken, refreshToken } = await createSession(user);
 
   return {
     data: { accessToken, user: { id: user.id, email: user.email } },
@@ -284,122 +258,112 @@ export async function signin(input: SigninInput): ServiceReturnType {
   };
 }
 
-export async function signinWithGoogle(input: { code?: string }) {
-  if (!input.code)
-    throw new ApiError(
-      400,
-      "Missing code",
-      undefined,
-      undefined,
-      `${env.CLIENT_URL}/google/callback`,
-    );
-
+export async function signinWithGoogle(
+  input: GoogleSigninInput,
+): ServiceReturnType<{ accessToken: string; user: PublicUser }, string> {
+  // 1. Exchange code + PKCE verifier (Google rejects a wrong verifier)
   const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
       code: input.code,
+      code_verifier: input.codeVerifier,
       client_id: env.GOOGLE_CLIENT_ID,
       client_secret: env.GOOGLE_CLIENT_SECRET,
-      redirect_uri: env.GOOGLE_REDIRECT_URI,
+      redirect_uri: env.GOOGLE_REDIRECT_URI, // must equal the one used in step 1
       grant_type: "authorization_code",
     }),
+    signal: AbortSignal.timeout(8000),
   });
-
   if (!tokenRes.ok) {
-    logger.error(await tokenRes.text());
-    throw new ApiError(
-      500,
-      "Token exchange failed",
-      undefined,
-      undefined,
-      `${env.CLIENT_URL}/google/callback`,
+    logger.warn(
+      `${JSON.stringify({ status: tokenRes.status })}, google token exchange failed`,
     );
+    throw new ApiError(400, "Google sign-in failed.");
   }
+  const { access_token } = (await tokenRes.json()) as { access_token?: string };
+  if (!access_token) throw new ApiError(400, "Google sign-in failed.");
 
-  const { access_token, id_token } = (await tokenRes.json()) as Record<
-    string,
-    string
-  >;
-
+  // 2. Profile. Fetched directly from Google over TLS with a token we just obtained,
+  //    so no ID-token signature check is needed.
   const userRes = await fetch(
     "https://openidconnect.googleapis.com/v1/userinfo",
     {
       headers: { Authorization: `Bearer ${access_token}` },
+      signal: AbortSignal.timeout(8000),
     },
   );
+  if (!userRes.ok) throw new ApiError(400, "Google sign-in failed.");
 
-  if (!userRes.ok) {
-    logger.error(await userRes.text());
+  const info = (await userRes.json()) as {
+    sub: string;
+    email?: string;
+    email_verified?: boolean;
+    name?: string;
+    picture?: string;
+  };
+  if (!info.sub || !info.email || info.email_verified !== true) {
+    throw new ApiError(400, "Your Google email is not verified.");
+  }
+  const email = info.email.trim().toLowerCase();
+
+  // 3. Find → link → create
+  let [user] = await db
+    .select()
+    .from(users)
+    .where(eq(users.googleAuthId, info.sub))
+    .limit(1);
+
+  if (!user) {
+    const [byEmail] = await db
+      .select()
+      .from(users)
+      .where(eq(users.email, email))
+      .limit(1);
+
+    if (byEmail) {
+      // Link. Google vouches for this email.
+      // If the local account was never verified it may belong to a squatter, so drop their password.
+      [user] = await db
+        .update(users)
+        .set({
+          googleAuthId: info.sub,
+          emailVerifiedAt: byEmail.emailVerifiedAt ?? new Date(),
+          avatarUrl: byEmail.avatarUrl ?? info.picture,
+          ...(byEmail.emailVerifiedAt ? {} : { passwordHash: null }),
+        })
+        .where(eq(users.id, byEmail.id))
+        .returning();
+    } else {
+      [user] = await db
+        .insert(users)
+        .values({
+          email,
+          name: info.name,
+          googleAuthId: info.sub,
+          emailVerifiedAt: new Date(),
+          avatarUrl: info.picture,
+        })
+        .returning(); // was missing, so new Google users used to get a 500
+    }
+  }
+  if (!user) throw new ApiError(500, "Error creating user");
+
+  // 4. Same gate as password signin
+  if (user.status !== "active") {
     throw new ApiError(
-      500,
-      "Failed to fetch google user",
-      undefined,
-      undefined,
-      `${env.CLIENT_URL}/google/callback`,
+      403,
+      "This account is unavailable.",
+      /* code: */ "ACCOUNT_DISABLED",
     );
   }
 
-  const user = (await userRes.json()) as {
-    sub: string;
-    name: string;
-    email: string;
-  }; // { sub, name, email, picture, ... }
-
-  console.log(user);
-
-  let dbUser = (
-    await db
-      .select()
-      .from(users)
-      .where(and(eq(users.email, user.email), eq(users.googleAuthId, user.sub)))
-      .limit(1)
-  )[0];
-
-  if (!dbUser) {
-    dbUser = (
-      await db
-        .insert(users)
-        .values({ email: user.email, name: user.name, googleAuthId: user.sub })
-    )[0];
-  }
-
-  if (!dbUser) {
-    throw new ApiError(500, "Error creating user");
-  }
-
-  const accessToken = signAccessJWT({
-    role: dbUser.role,
-    userId: dbUser.id,
-  });
-
-  const sessionId = crypto.randomUUID().toString();
-  const familyId = crypto.randomUUID().toString();
-  const refreshToken = signRefreshJWT({
-    sessionId,
-    userId: dbUser.id,
-    familyId,
-  });
-  const expiresAt = new Date(
-    Date.now() + parseDuration(env.JWT_REFRESH_EXPIRES),
-  );
-  const refreshTokenHash = await generateHash(refreshToken);
-
-  await db.insert(refreshTokens).values({
-    expiresAt,
-    tokenHash: refreshTokenHash,
-    userId: dbUser.id,
-    id: sessionId,
-    familyId,
-  });
-
+  const { accessToken, refreshToken } = await createSession(user);
   return {
-    data: { accessToken, user: { id: dbUser.id, email: user.email } },
-    message: "",
     statusCode: 200,
-    meta: {
-      refreshToken,
-    },
+    message: "Signed in.",
+    data: { accessToken, user: toPublicUser(user) },
+    meta: { refreshToken },
   };
 }
 
@@ -424,14 +388,7 @@ export async function forgotPassword(
     return { message: responseMessage, data: {}, statusCode: 200 };
   }
 
-  const otp = generate(6, {
-    digits: true,
-    lowerCaseAlphabets: false,
-    specialChars: false,
-    upperCaseAlphabets: false,
-  });
-
-  const otpHash = await generateHash(otp);
+  const [otp, otpHash] = generateOtp();
 
   await upsertOTP({
     expiresAt: new Date(Date.now() + HOUR),
@@ -442,7 +399,8 @@ export async function forgotPassword(
   });
 
   // TODO: Send otp to email
-  logger.info("OTP for " + input.email + ": " + otp);
+  if (env.NODE_ENV === "development")
+    logger.info("OTP for " + input.email + ": " + otp);
   await sendForgotPassword(user.email, user.email, otp);
 
   return { message: responseMessage, data: {}, statusCode: 200 };
@@ -465,7 +423,7 @@ export async function resetPassword(
   const responseMessage = "Password reset.";
 
   if (!user) {
-    return { message: responseMessage, data: {}, statusCode: 200 };
+    throw new ApiError(400, "Invalid or expired code.");
   }
 
   const record =
@@ -494,37 +452,29 @@ export async function resetPassword(
 
   const passwordHash = await generateHash(input.newPassword);
 
-  const updatedUser = (
-    await db
+  await db.transaction(async (tx) => {
+    const [consumed] = await tx
+      .update(otpRecords)
+      .set({ consumedAt: new Date() })
+      .where(and(eq(otpRecords.id, record.id), isNull(otpRecords.consumedAt)))
+      .returning({ id: otpRecords.id });
+    if (!consumed) throw new ApiError(400, "Invalid or expired code.");
+
+    await tx
       .update(users)
-      .set({
-        passwordHash,
-      })
-      .returning({ email: users.email, id: users.id })
-      .where(eq(users.email, user.email))
-  )[0];
-
-  if (!updatedUser)
-    throw new ApiError(
-      500,
-      "Something went wrong. Error updating user password.",
-    );
-
-  await db
-    .update(otpRecords)
-    .set({ consumedAt: new Date() })
-    .where(eq(otpRecords.id, record.id));
+      .set({ passwordHash /* or emailVerifiedAt */ })
+      .where(eq(users.id, user.id));
+    await tx
+      .update(refreshTokens)
+      .set({ revokedAt: new Date() })
+      .where(eq(refreshTokens.userId, user.id));
+  });
 
   await sendPasswordResetSuccess(
     user.email,
     user.email,
-    `${env.CLIENT_URL}/login`,
+    `${env.CLIENT_URL}/signin`,
   );
-
-  await db
-    .update(refreshTokens)
-    .set({ revokedAt: new Date() })
-    .where(eq(refreshTokens.userId, user.id));
 
   return {
     message: responseMessage,
@@ -534,29 +484,34 @@ export async function resetPassword(
 }
 
 export async function refresh(token: string): ServiceReturnType {
-  const payload = verifyRefreshJWT(token);
-  if (!payload) {
-    throw new ApiError(401, "Invalid refresh token.");
-  }
+  const payload = token ? verifyRefreshJWT(token) : null;
+  if (!token || !payload) throw new ApiError(401, "Invalid refresh token.");
 
-  const session = (
+  const [session] = await db
+    .select()
+    .from(refreshTokens)
+    .where(eq(refreshTokens.id, payload.sessionId));
+  if (!session || session.revokedAt || session.expiresAt < new Date())
+    throw new ApiError(401, "Invalid refresh token.");
+
+  const hash = sha256(token);
+  const isCurrent = same(session.tokenHash, hash);
+  const isGraceHit =
+    !isCurrent &&
+    same(session.previousTokenHash, hash) &&
+    !!session.rotatedAt &&
+    Date.now() - session.rotatedAt.getTime() < GRACE_MS;
+
+  if (!isCurrent && !isGraceHit) {
     await db
-      .select()
-      .from(refreshTokens)
-      .where(eq(refreshTokens.id, payload.sessionId))
-  )[0];
-
-  if (!session || session.revokedAt) {
+      .update(refreshTokens)
+      .set({ revokedAt: new Date() })
+      .where(eq(refreshTokens.familyId, session.familyId)); // genuine reuse
     throw new ApiError(401, "Invalid refresh token.");
   }
 
-  if (session.expiresAt < new Date())
-    throw new ApiError(
-      401,
-      "Session has expired. Sign in to create a new one.",
-    );
-
-  const isValid = await verifyHash(session.tokenHash, token);
+  const isValid = same(session.tokenHash, hash);
+  console.log(isValid);
   if (!isValid) {
     await db
       .update(refreshTokens)
@@ -565,47 +520,52 @@ export async function refresh(token: string): ServiceReturnType {
     throw new ApiError(401, "Invalid refresh token.");
   }
 
-  const user = (
-    await db
-      .select({ id: users.id, role: users.role })
-      .from(users)
-      .where(eq(users.id, session.userId))
-  )[0];
-  if (!user) throw new ApiError(404, "User not found.");
+  const [user] = await db
+    .select({
+      id: users.id,
+      role: users.role,
+      status: users.status,
+      emailVerifiedAt: users.emailVerifiedAt,
+    })
+    .from(users)
+    .where(eq(users.id, session.userId));
+  if (!user || user.status !== "active" || !user.emailVerifiedAt)
+    throw new ApiError(401, "Invalid refresh token."); // 401, not 404
 
-  const accessToken = signAccessJWT({
-    role: user.role,
-    userId: user.id,
-  });
-
-  const sessionId = session.id;
+  const accessToken = signAccessJWT({ role: user.role, userId: user.id });
+  if (isGraceHit)
+    return { data: { accessToken }, message: "", statusCode: 200 };
 
   const refreshToken = signRefreshJWT({
-    sessionId,
+    sessionId: session.id,
     userId: user.id,
     familyId: session.familyId,
+    jti: crypto.randomUUID(),
   });
-  const expiresAt = new Date(
-    Date.now() + parseDuration(env.JWT_REFRESH_EXPIRES),
-  );
 
-  const refreshTokenHash = await generateHash(refreshToken);
-
-  await db
+  const rotated = await db
     .update(refreshTokens)
     .set({
-      expiresAt,
-      tokenHash: refreshTokenHash,
+      previousTokenHash: session.tokenHash,
+      rotatedAt: new Date(),
+      tokenHash: sha256(refreshToken),
+      expiresAt: new Date(Date.now() + parseDuration(env.JWT_REFRESH_EXPIRES)),
     })
-    .where(eq(refreshTokens.id, sessionId));
+    .where(
+      and(
+        eq(refreshTokens.id, session.id),
+        eq(refreshTokens.tokenHash, session.tokenHash),
+      ),
+    )
+    .returning({ id: refreshTokens.id });
 
+  if (!rotated.length)
+    return { data: { accessToken }, message: "", statusCode: 200 };
   return {
     data: { accessToken },
     message: "",
     statusCode: 200,
-    meta: {
-      refreshToken,
-    } as const,
+    meta: { refreshToken },
   };
 }
 
@@ -631,25 +591,14 @@ export async function logout(token: string): ServiceReturnType {
 }
 
 export async function getAuthUser(userId: string): ServiceReturnType {
-  const user = (
-    await db
-      .select({
-        id: users.id,
-        email: users.email,
-        createdAt: users.createdAt,
-        status: users.status,
-        role: users.role,
-      })
-      .from(users)
-      .where(eq(users.id, userId))
-  )[0];
+  const user = (await db.select().from(users).where(eq(users.id, userId)))[0];
 
   if (!user) throw new ApiError(404, "User not found.");
 
   return {
     message: "",
     data: {
-      user,
+      user: toPublicUser(user),
     },
     statusCode: 200,
   };

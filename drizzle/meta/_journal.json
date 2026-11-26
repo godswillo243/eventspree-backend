@@ -8,6 +8,20 @@
       "when": 1795400456940,
       "tag": "0000_cold_winter_soldier",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1795550891195,
+      "tag": "0001_opposite_mesmero",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1795633733967,
+      "tag": "0002_square_thunderbolt",
+      "breakpoints": true
     }
   ]
 }

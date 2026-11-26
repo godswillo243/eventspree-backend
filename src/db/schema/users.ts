@@ -6,6 +6,7 @@ import {
   uuid,
   varchar,
   boolean,
+  text,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
@@ -33,6 +34,7 @@ export const users = pgTable(
     name: varchar("name", { length: 30 }),
     role: userRoleEnum("role").notNull().default("user"),
     status: userStatusEnum("status").notNull().default("active"),
+    avatarUrl: text("avatar_url"),
     emailVerifiedAt: timestamp("email_verified_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()

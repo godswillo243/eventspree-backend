@@ -1,0 +1,17 @@
+
+services:
+  db:
+    image: postgres
+    restart: always
+    ports:
+      - "5432:5432"
+    environment: 
+      POSTGRES_USER: godswill
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: es
+    volumes:
+      - es:/var/lib/postgress/data
+
+
+volumes:
+  es:

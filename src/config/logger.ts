@@ -42,7 +42,7 @@ export function createLogger(namespace?: string) {
     if (!shouldLog(level)) return;
 
     const color = COLORS[level];
-    const line = `${timestamp()} ${color}${level.toUpperCase().padEnd(5)}${RESET} ${prefix}${message}${formatMeta(meta)}`;
+    const line = `${timestamp()} ${color}${level.toUpperCase().padEnd(5)}${RESET} ${prefix}${message}${formatMeta(meta)}\n`;
 
     if (level === "error") {
       process.stderr.write(line + "\n");

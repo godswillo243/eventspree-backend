@@ -4,7 +4,8 @@ import { sendError } from "../utils/api-response";
 import { verifyAccessJWT } from "../utils/jwt";
 
 export const requireAuth: Handler = (req, res, next) => {
-  const token = req.headers.authorization?.split(" ")?.[1];
+  const token =
+    req.cookies.accessToken ?? req.headers.authorization?.split(" ")?.[1];
 
   if (!token) {
     sendError(res, "Missing access token.", 401);

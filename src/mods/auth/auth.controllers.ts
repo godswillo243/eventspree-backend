@@ -1,49 +1,55 @@
 import { type Handler, type Request, type Response } from "express";
 
 import * as services from "./auth.services";
-import { DAY } from "../../constants";
-import { env } from "../../config/env";
-import { sendError, sendSuccess } from "../../utils/api-response";
+import { sendSuccess } from "../../utils/api-response";
 import { ApiError } from "../../utils/api-error";
+import type { User } from "../../db/types";
+import { clearAuthCookies, setAuthCookies } from "./auth.utils";
+import type { PublicUser } from "../../types";
 
 export const signup: Handler = async (req: Request, res: Response) => {
-  const { data, message, statusCode, meta } = await services.signup(req.body);
+  const { data, message, statusCode } = await services.signup(req.body);
+
   sendSuccess(res, data, message, statusCode);
 };
 export const signin: Handler = async (req: Request, res: Response) => {
   const { data, message, statusCode, meta } = await services.signin(req.body);
 
-  res.cookie("refreshToken", meta?.refreshToken, {
-    httpOnly: true,
-    sameSite: "strict",
-    maxAge: DAY * 30,
-    secure: env.NODE_ENV === "production",
-  });
-  sendSuccess(res, data, message, statusCode);
-};
-export const signinWithGoogle: Handler = async (
-  req: Request,
-  res: Response,
-) => {
-  const { data, message, statusCode, meta } = await services.signinWithGoogle({
-    code: req.query.code as string,
-  });
-
-  res.cookie("refreshToken", meta?.refreshToken, {
-    httpOnly: true,
-    sameSite: "strict",
-    maxAge: DAY * 30,
-    secure: env.NODE_ENV === "production",
-  });
-  res.redirect(
-    `${env.CLIENT_URL}/google/callback?accessToken=${data.accessToken}`,
+  setAuthCookies(
+    res,
+    (data as { accessToken: string }).accessToken,
+    meta?.refreshToken as string,
   );
-  // sendSuccess(res, data, message, statusCode);
+  sendSuccess(
+    res,
+    { user: (data as { user: User }).user },
+    message,
+    statusCode,
+  );
+};
+export const signinWithGoogle: Handler = async (req, res) => {
+  const { data, message, statusCode, meta } = await services.signinWithGoogle(
+    req.body,
+  );
+  setAuthCookies(res, data.accessToken, meta?.refreshToken);
+  sendSuccess(res, { user: data.user }, message, statusCode);
 };
 
-export const verifyEmail: Handler = async (req: Request, res: Response) => {
-  const { data, message, statusCode } = await services.verifyEmail(req.body);
-  sendSuccess(res, data, message, statusCode);
+export const verifyEmail: Handler = async (req, res) => {
+  const { data, message, statusCode, meta } = await services.verifyEmail(
+    req.body,
+  );
+  setAuthCookies(
+    res,
+    (data as { accessToken: string }).accessToken,
+    meta?.refreshToken as string,
+  );
+  sendSuccess(
+    res,
+    { user: (data as { user: PublicUser }).user },
+    message,
+    statusCode,
+  );
 };
 
 export const resendEmailVerification: Handler = async (
@@ -72,14 +78,13 @@ export const refresh: Handler = async (req: Request, res: Response) => {
   const token = req.cookies.refreshToken;
   const { data, message, statusCode, meta } = await services.refresh(token);
 
-  res.cookie("refreshToken", meta?.refreshToken, {
-    httpOnly: true,
-    sameSite: "strict",
-    maxAge: DAY * 30,
-    secure: env.NODE_ENV === "production",
-  });
+  setAuthCookies(
+    res,
+    (data as { accessToken: string }).accessToken,
+    meta?.refreshToken as string,
+  );
 
-  sendSuccess(res, data, message, statusCode);
+  sendSuccess(res, null, message, statusCode);
 };
 
 export const logout = async (req: Request, res: Response) => {
@@ -87,7 +92,7 @@ export const logout = async (req: Request, res: Response) => {
 
   const { data, message, statusCode } = await services.logout(token);
 
-  res.clearCookie("refreshToken");
+  clearAuthCookies(res);
 
   sendSuccess(res, data, message, statusCode);
 };

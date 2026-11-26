@@ -17,6 +17,7 @@ import { ipKeyGenerator } from "express-rate-limit";
 import { validate } from "../../middleware/validate";
 import {
   forgotPasswordSchema,
+  googleSigninSchema,
   resendEmailVerificationOTPSchema,
   resetPasswordSchema,
   signinSchema,
@@ -87,8 +88,12 @@ routes.post("/refresh", rateLimiter(MINUTE * 15, 30), refresh);
 
 routes.post("/logout", logout);
 
-routes.get("/google/callback", signinWithGoogle);
-
+routes.post(
+  "/google",
+  rateLimiter(MINUTE * 15, 30),
+  validate(googleSigninSchema, "body"),
+  signinWithGoogle,
+);
 routes.get("/user", requireAuth, getAuthUser);
 
 export default routes;

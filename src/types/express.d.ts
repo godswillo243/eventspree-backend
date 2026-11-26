@@ -1,3 +1,4 @@
+import type { Logger } from "../config/logger";
 import { UserRole } from "../db/types";
 
 declare global {
